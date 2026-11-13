@@ -31,6 +31,10 @@ pub(crate) const WEIGHT_BLOCK: u8 = 10;
 /// Ports UDP à ne pas laisser sortir hors tunnel : NBT-NS, mDNS, LLMNR.
 pub(crate) const NAME_RESOLUTION_PORTS: [u16; 3] = [137, 5353, 5355];
 
+/// Ports DNS à ne pas laisser sortir hors serveurs du tunnel : DNS (53) et
+/// DNS-over-TLS (853). Un filtre par port couvre UDP et TCP.
+pub(crate) const DNS_PORTS: [u16; 2] = [53, 853];
+
 /// Protocole IP UDP.
 pub(crate) const PROTO_UDP: u8 = 17;
 
@@ -161,6 +165,11 @@ pub(crate) fn plan_hold_filters(config: &TunnelConfig, enabled: bool) -> Vec<Fil
 /// Full-tunnel : permit loopback (4 couches) ; block de tout l'IPv6 hors
 /// interface tunnel (connect + recv/accept) ; block UDP 137/5353/5355 hors
 /// tunnel en IPv4 (port distant en connect, port local en recv/accept).
+/// Revue 5.3 M3 : block du port distant 53/853 (UDP et TCP) en IPv4 et IPv6
+/// sur toute interface, sauf permit (poids supérieur) vers chaque serveur DNS
+/// du tunnel ; le bouclage reste permis. Même si Windows ignore la NRPT locale
+/// (NRPT GPO), aucune requête DNS ne part en clair vers un autre serveur.
+/// Split-tunnel : pas de filtre (limite documentée).
 pub(crate) fn plan_filters(
     config: &TunnelConfig,
     tunnel_luid: u64,
@@ -199,6 +208,38 @@ pub(crate) fn plan_filters(
             });
         }
     }
+    out.extend(plan_dns_filters(config));
+    out
+}
+
+/// Filtres anti-fuite DNS du full-tunnel (voir [`plan_filters`]).
+fn plan_dns_filters(config: &TunnelConfig) -> Vec<FilterSpec> {
+    let mut out = Vec::new();
+    for port in DNS_PORTS {
+        for layer in [Layer::ConnectV4, Layer::ConnectV6] {
+            out.push(FilterSpec {
+                name: format!("fortivpn-rs block DNS {port} off-tunnel {layer:?}"),
+                layer,
+                verdict: Verdict::Block,
+                weight: WEIGHT_BLOCK,
+                conditions: vec![Condition::RemotePort(port)],
+            });
+        }
+        for server in &config.dns.servers {
+            let layer = if server.is_ipv4() {
+                Layer::ConnectV4
+            } else {
+                Layer::ConnectV6
+            };
+            out.push(FilterSpec {
+                name: format!("fortivpn-rs permit DNS {port} tunnel server {server}"),
+                layer,
+                verdict: Verdict::Permit,
+                weight: WEIGHT_PERMIT,
+                conditions: vec![Condition::RemoteAddr(*server), Condition::RemotePort(port)],
+            });
+        }
+    }
     out
 }
 
@@ -234,7 +275,8 @@ mod tests {
     #[test]
     fn full_tunnel_filter_set() {
         let f = plan_filters(&full(), LUID, true);
-        assert_eq!(f.len(), 4 + 2 + 6);
+        // 4 loopback + 2 IPv6 + 6 noms + (4 blocs DNS + 2 permits, 1 serveur)
+        assert_eq!(f.len(), 4 + 2 + 6 + 4 + 2);
         let blocks = || f.iter().filter(|x| x.verdict == Verdict::Block);
         // IPv6 : bloqué dans les deux sens, sur toute interface autre que le tunnel.
         for layer in [Layer::ConnectV6, Layer::RecvAcceptV6] {
@@ -252,8 +294,12 @@ mod tests {
             assert!(blocks().any(|x| x.layer == Layer::RecvAcceptV4
                 && x.conditions.contains(&Condition::LocalPort(port))));
         }
-        // Tout block exclut le tunnel lui-même.
-        assert!(blocks().all(|x| x.conditions.contains(&Condition::LocalInterfaceNot(LUID))));
+        // Tout block hors DNS exclut le tunnel lui-même.
+        assert!(
+            blocks()
+                .filter(|x| !x.name.contains("DNS"))
+                .all(|x| x.conditions.contains(&Condition::LocalInterfaceNot(LUID)))
+        );
     }
 
     #[test]
@@ -276,6 +322,51 @@ mod tests {
                     .all(|b| b.weight < p.weight)
             );
         }
+    }
+
+    #[test]
+    fn full_tunnel_blocks_dns_except_tunnel_servers() {
+        let mut c = full();
+        c.dns.servers = vec!["10.0.0.53".parse().unwrap(), "fd00::53".parse().unwrap()];
+        let f = plan_filters(&c, LUID, true);
+        for port in DNS_PORTS {
+            for layer in [Layer::ConnectV4, Layer::ConnectV6] {
+                let b = f
+                    .iter()
+                    .find(|x| {
+                        x.verdict == Verdict::Block
+                            && x.layer == layer
+                            && x.conditions == [Condition::RemotePort(port)]
+                    })
+                    .expect("block DNS");
+                // Chaque permit DNS l'emporte sur le block de sa couche.
+                let permits: Vec<_> = f
+                    .iter()
+                    .filter(|x| {
+                        x.verdict == Verdict::Permit
+                            && x.layer == layer
+                            && x.conditions.contains(&Condition::RemotePort(port))
+                    })
+                    .collect();
+                assert_eq!(permits.len(), 1, "un serveur par famille");
+                assert!(permits[0].weight > b.weight);
+                let Condition::RemoteAddr(a) = permits[0].conditions[0] else {
+                    panic!("adresse attendue en premier");
+                };
+                assert_eq!(a.is_ipv4(), layer == Layer::ConnectV4);
+            }
+        }
+        // Le bouclage (permit poids max) précède/l'emporte sur les blocs DNS.
+        assert!(f.iter().any(|x| x.conditions == [Condition::Loopback]
+            && x.layer == Layer::ConnectV4
+            && x.weight > WEIGHT_BLOCK));
+    }
+
+    #[test]
+    fn no_dns_filters_in_split() {
+        let mut c = split();
+        c.dns.servers = vec!["10.0.0.53".parse().unwrap()];
+        assert!(plan_filters(&c, LUID, true).is_empty());
     }
 
     #[test]

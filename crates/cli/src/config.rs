@@ -16,6 +16,7 @@
 //! socks = "127.0.0.1:1080"     # optionnel (127.0.0.1:1080) ; "off" : pas de SOCKS
 //! forward = ["127.0.0.1:13389=srv.corp:3389"]   # optionnel : redirections TCP
 //! allow_non_loopback = false   # optionnel : autorise une écoute hors loopback
+//! owner_check = true           # optionnel : refuse les connexions d'un autre compte
 //! ```
 //!
 //! Avec `[proxy]`, aucune interface, route ni DNS du système n'est modifié : le
@@ -309,6 +310,7 @@ struct RawProxy {
     socks: Option<String>,
     forward: Option<Vec<String>>,
     allow_non_loopback: Option<bool>,
+    owner_check: Option<bool>,
 }
 
 /// Chemin par défaut : `<config utilisateur>/fortivpn-rs/config.toml`
@@ -497,7 +499,8 @@ fn validate_proxy(raw: RawProxy) -> Result<netproxy::ProxyConfig, ConfigError> {
         .collect::<Result<Vec<netproxy::Forward>, _>>()
         .map_err(|e: netproxy::ProxyConfigError| invalid("proxy.forward", e.to_string()))?;
     let config = netproxy::ProxyConfig::new(socks, forwards)
-        .with_allow_non_loopback(raw.allow_non_loopback.unwrap_or(false));
+        .with_allow_non_loopback(raw.allow_non_loopback.unwrap_or(false))
+        .with_owner_check(raw.owner_check.unwrap_or(true));
     config
         .validate()
         .map_err(|e| invalid("proxy", e.to_string()))?;
@@ -668,6 +671,9 @@ impl Config {
             if p.allow_non_loopback {
                 out.push_str("allow_non_loopback = true\n");
             }
+            if !p.owner_check {
+                out.push_str("owner_check = false\n");
+            }
         }
         if self.reconnect != ReconnectConfig::default() {
             out.push_str("\n[reconnect]\n");
@@ -716,6 +722,9 @@ impl Config {
         }
         if p.allow_non_loopback {
             out.push_str("\x20 allow_non_loopback = true (écoute accessible depuis le réseau)\n");
+        }
+        if !p.owner_check {
+            out.push_str("\x20 owner_check = false (connexions de tout compte acceptées)\n");
         }
         out
     }
@@ -992,6 +1001,23 @@ mod tests {
         ))
         .unwrap();
         assert!(ok.proxy.unwrap().allow_non_loopback);
+    }
+
+    #[test]
+    fn owner_check_key() {
+        let base = "host = \"h\"\nusername = \"u\"\n[proxy]\n";
+        let c = parse(base).unwrap();
+        assert!(c.proxy.as_ref().unwrap().owner_check);
+        assert!(!c.to_toml().contains("owner_check"));
+        let off = parse(&format!("{base}owner_check = false\n")).unwrap();
+        assert!(!off.proxy.as_ref().unwrap().owner_check);
+        assert!(off.to_toml().contains("owner_check = false"));
+        assert_eq!(parse(&off.to_toml()).unwrap(), off);
+        assert!(
+            off.render(Path::new("c.toml"))
+                .contains("owner_check = false")
+        );
+        assert!(parse(&format!("{base}owner_check = \"non\"\n")).is_err());
         assert!(matches!(
             parse(&format!("{base}sock = \"127.0.0.1:1\"\n")),
             Err(ConfigError::Structure(_))

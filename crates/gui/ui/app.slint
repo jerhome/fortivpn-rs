@@ -407,6 +407,7 @@ export component MainWindow inherits Window {
     in-out property <string> s-socks-port;
     in-out property <string> s-forwards;
     in-out property <bool> s-reconnect: true;
+    in-out property <bool> s-owner-check: true;
     in-out property <bool> s-close-to-tray: true;
 
     callback connect();
@@ -725,6 +726,12 @@ export component MainWindow inherits Window {
                         mono: true;
                         placeholder: "127.0.0.1:2222=10.0.0.10:22";
                     }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text { text: "Vérifier que les connexions au proxy viennent de mon compte (recommandé)"; color: Theme.text; font-size: 14px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                        Switch { on <=> root.s-owner-check; y: 0px; }
+                    }
+                    Text { text: "À désactiver uniquement si le proxy tourne dans WSL et que vous l'utilisez depuis Windows."; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
                 }
                 Card {
                     HorizontalLayout {

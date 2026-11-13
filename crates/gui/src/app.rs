@@ -87,6 +87,7 @@ pub fn render(win: &MainWindow, shared: &mut Shared, now: Instant) {
         win.set_s_socks_port(form.socks_port.into());
         win.set_s_forwards(form.forwards.into());
         win.set_s_reconnect(form.reconnect);
+        win.set_s_owner_check(form.owner_check);
         win.set_s_close_to_tray(form.close_to_tray);
     }
     win.set_service_available(shared.service_available);
@@ -113,6 +114,7 @@ pub fn read_form(win: &MainWindow) -> SettingsForm {
         socks_port: win.get_s_socks_port().into(),
         forwards: win.get_s_forwards().into(),
         reconnect: win.get_s_reconnect(),
+        owner_check: win.get_s_owner_check(),
         close_to_tray: win.get_s_close_to_tray(),
     }
 }

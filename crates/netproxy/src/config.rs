@@ -167,6 +167,15 @@ pub struct Limits {
     pub tcp_timeout: Duration,
     /// Intervalle des keep-alive TCP dans le tunnel.
     pub keep_alive: Duration,
+    /// Clients simultanés sur l'écouteur SOCKS (M2).
+    pub socks_connections: usize,
+    /// Clients simultanés par redirection de port (M2).
+    pub forward_connections: usize,
+    /// Clients simultanément en cours de négociation/connexion, tous écouteurs (M2).
+    pub max_handshakes: usize,
+    /// Inactivité (aucun octet dans aucun sens) après laquelle une connexion
+    /// établie est coupée (M2).
+    pub idle_timeout: Duration,
 }
 
 impl Default for Limits {
@@ -178,6 +187,10 @@ impl Default for Limits {
             connect_timeout: Duration::from_secs(30),
             tcp_timeout: Duration::from_secs(120),
             keep_alive: Duration::from_secs(60),
+            socks_connections: 64,
+            forward_connections: 32,
+            max_handshakes: 16,
+            idle_timeout: Duration::from_secs(300),
         }
     }
 }
@@ -195,6 +208,11 @@ pub struct ProxyConfig {
     pub allow_non_loopback: bool,
     /// Limites de ressources.
     pub limits: Limits,
+    /// N'accepte que les clients dont le processus appartient à l'utilisateur qui a
+    /// lancé le proxy (uid sous Linux, SID sous Windows ; défaut `true`, M1). Un pair
+    /// non vérifiable (dont tout client distant) est refusé. À désactiver seulement
+    /// si nécessaire (ex. clients d'un autre compte, conteneur/WSL en réseau miroir).
+    pub owner_check: bool,
 }
 
 impl Default for ProxyConfig {
@@ -204,6 +222,7 @@ impl Default for ProxyConfig {
             forwards: Vec::new(),
             allow_non_loopback: false,
             limits: Limits::default(),
+            owner_check: true,
         }
     }
 }
@@ -222,6 +241,13 @@ impl ProxyConfig {
     #[must_use]
     pub fn with_allow_non_loopback(mut self, allow: bool) -> Self {
         self.allow_non_loopback = allow;
+        self
+    }
+
+    /// Active ou désactive le contrôle du propriétaire du processus client.
+    #[must_use]
+    pub fn with_owner_check(mut self, on: bool) -> Self {
+        self.owner_check = on;
         self
     }
 

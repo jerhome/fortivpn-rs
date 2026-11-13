@@ -96,6 +96,8 @@ Une seule base de code Rust multiplateforme en **Slint** (choix validé par l'ut
 - [x] **8.1** GUI Windows : connexion (mot de passe saisi, jamais stocké), état temps réel, déconnexion, journal, réglages (config TOML, mode proxy) ; fonctionne **sans droits admin** (mode proxy, ou via le service 4.3 une fois installé).
 - [x] **8.5** Licence Slint « Royalty-free » (choix utilisateur 2026-11-13) : écran « À propos » avec le widget `AboutSlint` / mention « Made with Slint », fichier de licences tierces (Slint + dépendances), README mis à jour.
 - [x] **8.6** (RP) Première utilisation guidée (retour terrain Windows 2026-11-13) : config absente → ouvrir directement Réglages avec un assistant (passerelle, port, utilisateur, épinglage proposé après 1re connexion) au lieu d'une erreur ; mode Service grisé avec explication si le service n'est pas installé, mode Proxy sélectionné par défaut ; mémoriser le dernier mode choisi. **Bug terrain Windows** : le bouton Réglages ne s'ouvre pas (probablement quand la config est absente) — à corriger en priorité dans cette story.
+- [ ] **8.8** (RP) Bug : le formulaire Réglages de la GUI perd `allow_non_loopback` à l'enregistrement ; `SettingsForm::default()` a `owner_check=false`.
+- [x] **8.7** (RP) Option `owner_check` du proxy réglable : clé TOML `[proxy] owner_check` (CLI) + case à cocher dans Réglages (GUI) avec explication (désactiver seulement pour un proxy lancé dans WSL et utilisé depuis Windows) ; README.
 - [x] **8.2** Icône de zone de notification + notifications (fusionne 4.5).
 - [x] **8.3** Distribution Windows : exe portable (+ wintun.dll pour le mode service), icône, version.
 - [x] **8.4** (priorité basse) GUI Linux X11/Wayland — même base de code, tests dans WSLg.

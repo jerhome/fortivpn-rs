@@ -37,7 +37,7 @@ use crate::crypto::IkeSuite;
 use crate::esp::{self, Datagram, EspTunnel, Inbound};
 use crate::ike::{
     self, ChildSaKeys, CloseReason, EspProposal, Event, FailReason, IKE_PORT, IkeConfig,
-    IkeInitiator, Lifetimes, NATT_PORT, Output,
+    IkeInitiator, Lifetimes, NATT_PORT, Output, ResponderAuth,
 };
 
 /// MTU de l'interface TUN (`docs/protocol-ipsec.md` §4 : 1400 recommandé).
@@ -61,8 +61,13 @@ pub struct IpsecOptions {
     pub psk: SecretString,
     /// IDi (type, données) ; défaut : ID_FQDN `fortivpn-client`.
     pub idi: Option<(u8, Vec<u8>)>,
-    /// IDr imposé (type, données) ; défaut : n'importe lequel.
+    /// IDr imposé (type, données) ; défaut : n'importe lequel. Recommandé, vérifié s'il est
+    /// fourni.
     pub expected_idr: Option<(u8, Vec<u8>)>,
+    /// Authentification exigée de la passerelle (défaut : PSK). Recommandé :
+    /// [`ResponderAuth::CertPinned`] avec l'empreinte SHA-256 du certificat de la passerelle
+    /// (cf. `docs/security/review-6.5-ipsec.md`, M1).
+    pub responder_auth: ResponderAuth,
     /// Propositions IKE (défaut : `docs/protocol-ipsec.md` §2.3).
     pub ike_suites: Option<Vec<IkeSuite>>,
     /// Groupes DH (défaut : MODP-2048 puis ECP-256).
@@ -97,6 +102,7 @@ impl IpsecOptions {
             psk: psk.into(),
             idi: None,
             expected_idr: None,
+            responder_auth: ResponderAuth::Psk,
             ike_suites: None,
             dh_groups: None,
             esp_proposals: None,
@@ -124,6 +130,7 @@ impl IpsecOptions {
             c.idi.clone_from(v);
         }
         c.expected_idr.clone_from(&self.expected_idr);
+        c.responder_auth.clone_from(&self.responder_auth);
         if let Some(v) = &self.ike_suites {
             c.ike_suites.clone_from(v);
         }

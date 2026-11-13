@@ -453,14 +453,15 @@ impl<O: SystemOps, J: JournalStore> Tracker<O, J> {
                 if full_tunnel {
                     tracing::warn!(
                         "règles NRPT de stratégie de groupe présentes : Windows ignore les règles \
-                         NRPT locales de fortivpn-rs ; en full-tunnel, des requêtes DNS peuvent \
-                         partir hors tunnel (fuite DNS)"
+                         NRPT locales de fortivpn-rs ; en full-tunnel, la fuite DNS est bloquée \
+                         par le pare-feu (filtres WFP actifs), sinon des requêtes DNS peuvent \
+                         partir hors tunnel"
                     );
                 } else {
                     tracing::warn!(
                         "règles NRPT de stratégie de groupe présentes : Windows ignore les règles \
-                         NRPT locales de fortivpn-rs ; les noms internes peuvent être résolus \
-                         par le DNS de la carte physique"
+                         NRPT locales de fortivpn-rs ; en split-tunnel (pas de blocage DNS), les \
+                         noms internes peuvent être résolus par le DNS local"
                     );
                 }
             }

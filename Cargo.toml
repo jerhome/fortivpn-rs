@@ -36,8 +36,10 @@ nix = { version = "0.31", default-features = false }
 num-bigint = "0.4"
 p256 = { version = "0.13", default-features = false, features = ["ecdh", "arithmetic"] }
 quick-xml = "0.42"
+pkcs1 = { version = "0.7", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17"
+rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
 rtnetlink = "0.24"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8"
@@ -50,6 +52,7 @@ tokio = { version = "1.54", default-features = false }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-tun = "0.15"
 tracing = "0.1.44"
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
 zeroize = "1.9"
 
 [workspace.lints.rust]

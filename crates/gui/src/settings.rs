@@ -31,6 +31,8 @@ pub struct SettingsForm {
     pub forwards: String,
     /// Reconnexion automatique.
     pub reconnect: bool,
+    /// Proxy : n'accepter que les connexions du même compte Windows.
+    pub owner_check: bool,
     /// Fermer la fenêtre la réduit dans la zone de notification (fichier d'état,
     /// pas `config.toml`).
     pub close_to_tray: bool,
@@ -62,6 +64,7 @@ impl SettingsForm {
                 .collect::<Vec<_>>()
                 .join(", "),
             reconnect: config.reconnect.enabled,
+            owner_check: proxy.owner_check,
             close_to_tray: true,
         }
     }
@@ -136,7 +139,7 @@ impl SettingsForm {
                     .map_err(|e| format!("Redirection : {e}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(ProxyConfig::new(socks, forwards))
+        Ok(ProxyConfig::new(socks, forwards).with_owner_check(self.owner_check))
     }
 }
 
@@ -291,13 +294,36 @@ mod tests {
         form.port = "10443".into();
         form.fingerprint = FP.to_ascii_uppercase();
         form.reconnect = false;
+        form.owner_check = false;
         form.forwards = "127.0.0.1:3390=10.0.0.20:3389\n127.0.0.1:2222=srv.corp:22".into();
         let c = form.to_config(&b).unwrap();
         assert_eq!(c.host, "gw.example.org");
         assert_eq!(c.port, 10443);
         assert_eq!(c.trusted_cert[0].to_hex(), FP);
         assert!(!c.reconnect.enabled);
-        assert_eq!(c.proxy.unwrap().forwards.len(), 2);
+        let p = c.proxy.unwrap();
+        assert_eq!(p.forwards.len(), 2);
+        assert!(!p.owner_check);
+        assert!(c_text_has_owner_off(&form, &b));
+    }
+
+    fn c_text_has_owner_off(form: &SettingsForm, b: &Config) -> bool {
+        form.to_config(b)
+            .unwrap()
+            .to_toml()
+            .contains("owner_check = false")
+    }
+
+    #[test]
+    fn owner_check_default_on_and_round_trips() {
+        let b = base();
+        let form = SettingsForm::from_config(&b);
+        assert!(form.owner_check);
+        let mut off = b.clone();
+        off.proxy = Some(ProxyConfig::default().with_owner_check(false));
+        let f = SettingsForm::from_config(&off);
+        assert!(!f.owner_check);
+        assert_eq!(f.to_config(&off).unwrap(), off);
     }
 
     #[test]

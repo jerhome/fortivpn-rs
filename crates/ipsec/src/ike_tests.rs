@@ -10,15 +10,15 @@ use crate::sk;
 use crate::testutil::*;
 use crate::wire::*;
 
-struct Run {
-    events: Vec<Event>,
+pub(crate) struct Run {
+    pub(crate) events: Vec<Event>,
     /// Message IDs (déchiffrés) des IKE_AUTH envoyés par le client.
-    sent_auth_mids: Vec<u32>,
-    sent_init: u32,
+    pub(crate) sent_auth_mids: Vec<u32>,
+    pub(crate) sent_init: u32,
 }
 
 /// Fait dialoguer l'initiateur et le répondeur jusqu'à la fin.
-fn run(ini: &mut IkeInitiator, resp: &mut Responder) -> Run {
+pub(crate) fn run(ini: &mut IkeInitiator, resp: &mut Responder) -> Run {
     let now = Instant::now();
     let mut r = Run {
         events: vec![],

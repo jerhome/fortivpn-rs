@@ -51,6 +51,108 @@ pub fn cfg() -> IkeConfig {
     c
 }
 
+/// Certificat RSA-2048 auto-signé de test (CN=gw.example.test) et sa clé PKCS#8.
+/// Matériel **de test uniquement**, non secret (généré pour ce dépôt).
+pub const TEST_RSA_CERT: &[u8] = include_bytes!("../testdata/test-gw-rsa.cert.der");
+pub const TEST_RSA_KEY: &[u8] = include_bytes!("../testdata/test-gw-rsa.key.p8.der");
+/// Certificat ECDSA P-256 auto-signé de test et sa clé PKCS#8 (test uniquement).
+pub const TEST_P256_CERT: &[u8] = include_bytes!("../testdata/test-gw-p256.cert.der");
+pub const TEST_P256_KEY: &[u8] = include_bytes!("../testdata/test-gw-p256.key.p8.der");
+
+/// AlgorithmIdentifier DER (RFC 7427 annexe A) : sha256WithRSAEncryption (A.1.2).
+pub const ALG_SHA256_RSA: &[u8] = &[
+    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00,
+];
+/// ecdsa-with-SHA256 (A.3.1).
+pub const ALG_ECDSA_SHA256: &[u8] = &[
+    0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02,
+];
+/// RSASSA-PSS SHA-256, MGF1-SHA-256, sel 32 (A.4.3).
+pub const ALG_RSA_PSS_SHA256: &[u8] = &[
+    0x30, 0x41, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30, 0x34, 0xa0,
+    0x0f, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00,
+    0xa1, 0x1c, 0x30, 0x1a, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30,
+    0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03,
+    0x02, 0x01, 0x20,
+];
+
+/// Mode d'authentification de la passerelle simulée dans le premier IKE_AUTH.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GwAuth {
+    /// AUTH PSK (méthode 2).
+    Psk,
+    /// Méthode 1 : RSA PKCS#1 v1.5 / SHA-1, certificat RSA.
+    RsaSha1,
+    /// Méthode 14 : sha256WithRSAEncryption, certificat RSA.
+    RsaPkcs1Sha256,
+    /// Méthode 14 : RSASSA-PSS SHA-256, certificat RSA.
+    RsaPss,
+    /// Méthode 14 : ECDSA P-256 / SHA-256, certificat P-256.
+    EcdsaP256,
+}
+
+impl GwAuth {
+    pub fn cert(self) -> &'static [u8] {
+        if self == Self::EcdsaP256 {
+            TEST_P256_CERT
+        } else {
+            TEST_RSA_CERT
+        }
+    }
+
+    /// (méthode, données AUTH) signant `signed`.
+    pub fn sign(self, signed: &[u8]) -> (u8, Vec<u8>) {
+        use ring::signature as rs;
+        let rng = ring::rand::SystemRandom::new();
+        let rsa = || rs::RsaKeyPair::from_pkcs8(TEST_RSA_KEY).unwrap();
+        let ring_rsa = |pad: &'static dyn rs::RsaEncoding| {
+            let k = rsa();
+            let mut sig = vec![0u8; k.public().modulus_len()];
+            k.sign(pad, &rng, signed, &mut sig).unwrap();
+            sig
+        };
+        let digital = |alg: &[u8], sig: Vec<u8>| {
+            let mut v = vec![u8::try_from(alg.len()).unwrap()];
+            v.extend_from_slice(alg);
+            v.extend_from_slice(&sig);
+            (14, v)
+        };
+        match self {
+            Self::Psk => panic!("pas de signature en mode PSK"),
+            Self::RsaSha1 => {
+                use rsa::pkcs8::DecodePrivateKey;
+                use rsa::signature::{SignatureEncoding, Signer};
+                let k = rsa::RsaPrivateKey::from_pkcs8_der(TEST_RSA_KEY).unwrap();
+                let sk = rsa::pkcs1v15::SigningKey::<sha1::Sha1>::new(k);
+                (1, sk.sign(signed).to_vec())
+            }
+            Self::RsaPkcs1Sha256 => digital(ALG_SHA256_RSA, ring_rsa(&rs::RSA_PKCS1_SHA256)),
+            Self::RsaPss => digital(ALG_RSA_PSS_SHA256, ring_rsa(&rs::RSA_PSS_SHA256)),
+            Self::EcdsaP256 => {
+                let k = rs::EcdsaKeyPair::from_pkcs8(
+                    &rs::ECDSA_P256_SHA256_ASN1_SIGNING,
+                    TEST_P256_KEY,
+                    &rng,
+                )
+                .unwrap();
+                digital(
+                    ALG_ECDSA_SHA256,
+                    k.sign(&rng, signed).unwrap().as_ref().to_vec(),
+                )
+            }
+        }
+    }
+}
+
+/// Configuration client exigeant le certificat épinglé de `gw`.
+pub fn cfg_cert(gw: GwAuth) -> IkeConfig {
+    let mut c = cfg();
+    c.responder_auth = ResponderAuth::CertPinned {
+        pins: vec![crate::cert::cert_pin(gw.cert())],
+    };
+    c
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Quirk {
     None,
@@ -59,6 +161,10 @@ pub enum Quirk {
     BadServerSuccess,
     RequireGroup(DhGroup),
     RequireCookie,
+    /// Signature AUTH altérée (un octet inversé).
+    TamperSignature,
+    /// AUTH par signature sans payload CERT.
+    OmitCert,
 }
 
 pub struct Responder {
@@ -80,6 +186,12 @@ pub struct Responder {
     pub gcm_ctr: u64,
     pub cookie_seen: bool,
     pub init_count: u32,
+    /// Authentification présentée dans le premier IKE_AUTH (défaut : PSK).
+    pub gw_auth: GwAuth,
+    /// CERTREQ reçu dans le premier IKE_AUTH du client.
+    pub certreq_seen: bool,
+    /// Données de SIGNATURE_HASH_ALGORITHMS reçues dans IKE_SA_INIT.
+    pub sig_hashes_seen: Option<Vec<u8>>,
 }
 
 pub const IDR: &[u8] = b"gw.example.test";
@@ -113,7 +225,17 @@ impl Responder {
             gcm_ctr: 0,
             cookie_seen: false,
             init_count: 0,
+            gw_auth: GwAuth::Psk,
+            certreq_seen: false,
+            sig_hashes_seen: None,
         }
+    }
+
+    /// Répondeur authentifié par certificat (`gw`).
+    pub fn with_auth(quirk: Quirk, gw: GwAuth) -> Self {
+        let mut r = Self::new(quirk);
+        r.gw_auth = gw;
+        r
     }
 
     pub fn hdr(&self, exch: u8, mid: u32) -> Header {
@@ -212,6 +334,10 @@ impl Responder {
         }
         // Retient la dernière requête (RealMessage1) et choisit la 1re proposition.
         self.msg1 = raw.to_vec();
+        self.sig_hashes_seen = m
+            .notifies()
+            .find(|n| n.ty == notify::SIGNATURE_HASH_ALGORITHMS)
+            .map(|n| n.data.clone());
         self.ni = ni.unwrap();
         let prop = sa.unwrap().remove(0);
         let pick = |ty: u8| prop.transforms.iter().find(|t| t.ty == ty).cloned();
@@ -287,30 +413,54 @@ impl Responder {
                             self.esp_chosen = Some(p);
                         }
                         Payload::Cp(cp) => assert_eq!(cp.cfg_type, 1),
+                        Payload::CertReq { encoding, .. } => {
+                            assert_eq!(*encoding, 4);
+                            self.certreq_seen = true;
+                        }
                         _ => {}
                     }
                 }
                 let keys = self.keys.as_ref().unwrap();
-                let a = auth_value(
-                    suite.prf,
-                    self.psk.as_bytes(),
-                    &self.msg2,
-                    &self.ni,
-                    &keys.sk_pr,
-                    &id_body(2, IDR),
-                );
-                let payloads = [
-                    Payload::Id {
-                        responder: true,
-                        id_type: 2,
-                        data: IDR.to_vec(),
-                    },
-                    Payload::Auth {
+                let mut payloads = vec![Payload::Id {
+                    responder: true,
+                    id_type: 2,
+                    data: IDR.to_vec(),
+                }];
+                if self.gw_auth == GwAuth::Psk {
+                    let a = auth_value(
+                        suite.prf,
+                        self.psk.as_bytes(),
+                        &self.msg2,
+                        &self.ni,
+                        &keys.sk_pr,
+                        &id_body(2, IDR),
+                    );
+                    payloads.push(Payload::Auth {
                         method: 2,
                         data: a.to_vec(),
-                    },
-                    Self::eap(1, 1, vec![1]),
-                ];
+                    });
+                } else {
+                    let signed = signed_octets(
+                        suite.prf,
+                        &self.msg2,
+                        &self.ni,
+                        &keys.sk_pr,
+                        &id_body(2, IDR),
+                    );
+                    let (method, mut data) = self.gw_auth.sign(&signed);
+                    if self.quirk == Quirk::TamperSignature {
+                        let last = data.len() - 1;
+                        data[last] ^= 0x01;
+                    }
+                    if self.quirk != Quirk::OmitCert {
+                        payloads.push(Payload::Cert {
+                            encoding: 4,
+                            data: self.gw_auth.cert().to_vec(),
+                        });
+                    }
+                    payloads.push(Payload::Auth { method, data });
+                }
+                payloads.push(Self::eap(1, 1, vec![1]));
                 vec![self.seal(1, &payloads)]
             }
             2 => {

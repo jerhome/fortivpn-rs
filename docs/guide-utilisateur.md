@@ -30,6 +30,7 @@ log_level = "info"         # optionnel : error | warn | info | debug | trace
 socks = "127.0.0.1:1080"                      # défaut ; "off" désactive le SOCKS
 forward = ["127.0.0.1:13389=srv.example.com:3389"]  # redirections TCP locale=distante
 allow_non_loopback = false                    # true : autorise l'écoute hors loopback (déconseillé)
+owner_check = true                            # false : accepter aussi les connexions d'un autre compte (voir encadré ci-dessous)
 
 # Reconnexion automatique
 [reconnect]
@@ -62,6 +63,8 @@ Aucune interface virtuelle, route ni DNS n'est modifié : le tunnel est exposé 
    - **SSH** : `ssh -o ProxyCommand="ncat --proxy 127.0.0.1:1080 --proxy-type socks5 %h %p" utilisateur@srv.example.com` (ou `ProxyCommand` équivalent dans `~/.ssh/config`).
    - **RDP** : ajouter `forward = ["127.0.0.1:13389=srv.example.com:3389"]`, puis ouvrir le client Bureau à distance sur `127.0.0.1:13389`.
 4. `Ctrl+C` pour se déconnecter.
+
+> **Mode proxy depuis WSL vers Windows** : par défaut (`[proxy] owner_check = true`), le proxy n'accepte que les connexions du même compte. Un navigateur Windows qui utilise un proxy lancé **dans WSL** est donc refusé, car WSL ne voit pas le propriétaire de la connexion. Marche à suivre : mettre `[proxy] owner_check = false` dans `config.toml`, ou décocher « Vérifier que les connexions au proxy viennent de mon compte » dans Réglages de la GUI. Il est préférable d'utiliser la GUI Windows, qui n'est pas concernée.
 
 ## Mode 3 : Windows, service installé par un administrateur
 

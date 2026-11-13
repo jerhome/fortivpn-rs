@@ -8,7 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 # Copie de `[workspace.lints]` sauf `unsafe_code` (« deny » au lieu de « forbid ») : le seul `unsafe`
-# est l'appel `setsockopt(SO_EXCLUSIVEADDRUSE)` de `listen.rs` (cfg(windows)), avec `#[allow]` local.
+# sont `setsockopt(SO_EXCLUSIVEADDRUSE)` (`listen.rs`) et le contrôle du propriétaire (`owner.rs`),
+# cfg(windows), avec `#[allow]` local.
 [lints.rust]
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
@@ -35,7 +36,13 @@ tokio = { workspace = true, features = ["sync", "net", "io-util", "time", "rt", 
 tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Networking_WinSock"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 ipnet.workspace = true
@@ -43,4 +50,4 @@ ipnet.workspace = true
 mock-gw = { path = "../../tools/mock-gw" }
 # Pair « passerelle » simulé (écho TCP + DNS UDP) des tests d'intégration.
 smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "socket-udp"] }
-tokio = { workspace = true, features = ["sync", "net", "io-util", "time", "rt", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["sync", "net", "io-util", "time", "rt", "rt-multi-thread", "macros", "test-util"] }

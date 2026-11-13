@@ -36,6 +36,8 @@ pub mod ptype {
     pub const KE: u8 = 34;
     pub const IDI: u8 = 35;
     pub const IDR: u8 = 36;
+    pub const CERT: u8 = 37;
+    pub const CERTREQ: u8 = 38;
     pub const AUTH: u8 = 39;
     pub const NONCE: u8 = 40;
     pub const NOTIFY: u8 = 41;
@@ -62,6 +64,8 @@ pub mod notify {
     pub const TEMPORARY_FAILURE: u16 = 43;
     pub const CHILD_SA_NOT_FOUND: u16 = 44;
     pub const IKEV2_FRAGMENTATION_SUPPORTED: u16 = 16430;
+    /// RFC 7427 §4 : algorithmes de hachage acceptés pour les signatures (méthode AUTH 14).
+    pub const SIGNATURE_HASH_ALGORITHMS: u16 = 16431;
 }
 
 /// Types d'attributs CP.
@@ -293,6 +297,16 @@ pub enum Payload {
         method: u8,
         data: Vec<u8>,
     },
+    /// CERT (37) : `encoding` (4 = certificat X.509 DER) et données.
+    Cert {
+        encoding: u8,
+        data: Vec<u8>,
+    },
+    /// CERTREQ (38) : `encoding` et liste (éventuellement vide) d'empreintes SHA-1 de SPKI d'AC.
+    CertReq {
+        encoding: u8,
+        data: Vec<u8>,
+    },
     Notify(Notify),
     Vendor(Vec<u8>),
     Ts {
@@ -328,6 +342,8 @@ impl Payload {
                 }
             }
             Payload::Auth { .. } => ptype::AUTH,
+            Payload::Cert { .. } => ptype::CERT,
+            Payload::CertReq { .. } => ptype::CERTREQ,
             Payload::Notify(_) => ptype::NOTIFY,
             Payload::Vendor(_) => ptype::VENDOR,
             Payload::Ts { responder, .. } => {
@@ -370,6 +386,10 @@ impl Payload {
             }
             Payload::Auth { method, data } => {
                 b.extend_from_slice(&[*method, 0, 0, 0]);
+                b.extend_from_slice(data);
+            }
+            Payload::Cert { encoding, data } | Payload::CertReq { encoding, data } => {
+                b.push(*encoding);
                 b.extend_from_slice(data);
             }
             Payload::Notify(n) => {
@@ -525,6 +545,17 @@ fn decode_body(ty: u8, critical: bool, next: u8, b: &[u8]) -> Result<Payload> {
             Payload::Auth {
                 method: b[0],
                 data: b[4..].to_vec(),
+            }
+        }
+        ptype::CERT | ptype::CERTREQ => {
+            let Some((&encoding, rest)) = b.split_first() else {
+                return Err(Error::Truncated);
+            };
+            let data = rest.to_vec();
+            if ty == ptype::CERT {
+                Payload::Cert { encoding, data }
+            } else {
+                Payload::CertReq { encoding, data }
             }
         }
         ptype::NOTIFY => {

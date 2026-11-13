@@ -4,6 +4,7 @@
 //! nonces, IV et clés privées DH).
 //!
 //! - [`wire`] : messages et payloads IKEv2 (RFC 7296).
+//! - [`cert`] : authentification du répondeur par certificat épinglé (RFC 7296/7427).
 //! - [`crypto`] : PRF, prf+, DH (groupes 14 et 19), dérivation SK_*, AUTH.
 //! - [`sk`] : payload SK (AES-CBC+HMAC, AES-GCM-16).
 //! - [`mschapv2`] : EAP-MSCHAPv2 et MSK.
@@ -13,6 +14,7 @@
 
 #![allow(clippy::doc_markdown)]
 
+pub mod cert;
 pub mod crypto;
 pub mod error;
 pub mod esp;
@@ -26,9 +28,13 @@ pub mod wire;
 pub mod testutil;
 
 #[cfg(test)]
+mod ike_cert_tests;
+#[cfg(test)]
 mod ike_tests;
 #[cfg(test)]
 mod tests;
 
+pub use cert::{CertPin, cert_pin};
 pub use error::{Error, Result};
+pub use ike::ResponderAuth;
 pub use transport::{IpsecOptions, IpsecTransport};

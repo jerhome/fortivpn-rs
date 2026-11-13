@@ -21,9 +21,13 @@ use established::{Est, IkeSa, ReqKind};
 use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroizing;
 
+use crate::cert::{
+    AUTH_METHOD_DIGITAL_SIG, AUTH_METHOD_RSA_SIG, CERT_ENCODING_X509, CertPin, SIG_HASH_SHA2_256,
+    pin_matches, verify_auth,
+};
 use crate::crypto::{
     DhGroup, DhKeypair, Encr, IkeSuite, Integ, Prf, SkKeys, auth_value, ct_eq, derive_sk_keys,
-    derive_sk_keys_rekey, prf_plus,
+    derive_sk_keys_rekey, prf_plus, signed_octets,
 };
 use crate::error::Error;
 use crate::mschapv2::{
@@ -59,6 +63,43 @@ impl<F: FnMut(&mut [u8])> Entropy for F {
     }
 }
 
+/// Politique d'authentification de la passerelle (répondeur) dans le premier IKE_AUTH.
+///
+/// Avec une PSK de groupe, tout détenteur de la PSK peut se faire passer pour la passerelle et
+/// obtenir la NT-Response MS-CHAPv2 (revue 6.5, M1). `CertPinned` exige une AUTH par signature
+/// (méthodes 1 ou 14) vérifiée avec la clé d'un certificat dont l'empreinte SHA-256 (DER du
+/// certificat feuille) figure dans `pins` ; une AUTH PSK est alors refusée.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ResponderAuth {
+    /// AUTH PSK (méthode 2) uniquement (défaut, comportement historique).
+    #[default]
+    Psk,
+    /// AUTH par signature avec certificat épinglé uniquement ; la PSK n'est pas utilisée.
+    CertPinned { pins: Vec<CertPin> },
+    /// Mode de transition : AUTH par certificat épinglé **ou** AUTH PSK. N'apporte pas la
+    /// protection de `CertPinned` contre un détenteur de la PSK (il peut répondre en PSK).
+    PskAndCertPinned { pins: Vec<CertPin> },
+}
+
+impl ResponderAuth {
+    /// AUTH PSK du répondeur acceptée.
+    pub fn accepts_psk(&self) -> bool {
+        !matches!(self, Self::CertPinned { .. })
+    }
+
+    /// Empreintes acceptées (vide : AUTH par certificat refusée).
+    pub fn pins(&self) -> &[CertPin] {
+        match self {
+            Self::Psk => &[],
+            Self::CertPinned { pins } | Self::PskAndCertPinned { pins } => pins,
+        }
+    }
+
+    fn wants_cert(&self) -> bool {
+        !matches!(self, Self::Psk)
+    }
+}
+
 /// Proposition ESP offerte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EspProposal {
@@ -86,6 +127,8 @@ pub struct IkeConfig {
     /// passer pour la passerelle (cf. docs/securite-versions-futures.md) ; imposer l'IDr de la
     /// passerelle attendue limite la réutilisation d'une PSK entre passerelles.
     pub expected_idr: Option<(u8, Vec<u8>)>,
+    /// Authentification exigée de la passerelle (défaut : PSK).
+    pub responder_auth: ResponderAuth,
     /// Une proposition IKE par suite, chacune listant tous les groupes DH.
     pub ike_suites: Vec<IkeSuite>,
     /// Groupes DH ; le premier est utilisé pour le KE initial.
@@ -158,6 +201,7 @@ impl IkeConfig {
             password,
             idi: (2, b"fortivpn-client".to_vec()),
             expected_idr: None,
+            responder_auth: ResponderAuth::Psk,
             ike_suites: vec![
                 cbc(Encr::AesCbc128, Prf::HmacSha256, Integ::HmacSha256_128),
                 cbc(Encr::AesCbc256, Prf::HmacSha256, Integ::HmacSha256_128),
@@ -213,6 +257,12 @@ pub enum FailReason {
     GatewayAuthFailed,
     #[error("IDr de la passerelle différent de celui attendu")]
     IdrMismatch,
+    #[error("méthode d'authentification de la passerelle refusée par la politique (méthode {0})")]
+    GatewayAuthMethodRefused(u8),
+    #[error("certificat de la passerelle absent ou non épinglé")]
+    GatewayCertNotPinned,
+    #[error("signature AUTH de la passerelle invalide : {0}")]
+    GatewaySignatureInvalid(String),
     #[error("identifiants refusés (EAP-MSCHAPv2 / EAP Failure)")]
     CredentialsRejected,
     #[error("la passerelle n'a pas prouvé la connaissance du mot de passe (MS-CHAPv2 S=)")]
@@ -455,9 +505,14 @@ impl IkeInitiator {
         if cfg.ike_suites.is_empty() || cfg.dh_groups.is_empty() || cfg.esp_proposals.is_empty() {
             return Err(Error::Unsupported("configuration IKE/ESP vide"));
         }
-        if cfg.psk.expose_secret().len() < MIN_PSK_LEN {
+        if cfg.responder_auth.accepts_psk() && cfg.psk.expose_secret().len() < MIN_PSK_LEN {
             return Err(Error::Unsupported(
                 "PSK vide ou trop courte (< 8 caractères)",
+            ));
+        }
+        if cfg.responder_auth.wants_cert() && cfg.responder_auth.pins().is_empty() {
+            return Err(Error::Unsupported(
+                "authentification par certificat sans empreinte épinglée",
             ));
         }
         if cfg.max_sends == 0 {
@@ -644,6 +699,13 @@ impl IkeInitiator {
             notify::NAT_DETECTION_DESTINATION_IP,
             nat_dst.to_vec(),
         )));
+        if self.cfg.responder_auth.wants_cert() {
+            // RFC 7427 §4 : sans cette annonce, le répondeur ne peut pas utiliser la méthode 14.
+            payloads.push(Payload::Notify(Notify::new(
+                notify::SIGNATURE_HASH_ALGORITHMS,
+                SIG_HASH_SHA2_256.to_be_bytes().to_vec(),
+            )));
+        }
         let header = Header {
             spi_i: self.spi_i,
             spi_r: [0; 8],
@@ -940,12 +1002,19 @@ impl IkeInitiator {
             msk: None,
         });
         self.pending = None;
-        let inner = vec![
-            Payload::Id {
-                responder: false,
-                id_type: self.cfg.idi.0,
-                data: self.cfg.idi.1.clone(),
-            },
+        let mut inner = vec![Payload::Id {
+            responder: false,
+            id_type: self.cfg.idi.0,
+            data: self.cfg.idi.1.clone(),
+        }];
+        if self.cfg.responder_auth.wants_cert() {
+            // CERTREQ sans liste d'AC : la confiance repose sur l'épinglage du certificat feuille.
+            inner.push(Payload::CertReq {
+                encoding: CERT_ENCODING_X509,
+                data: Vec::new(),
+            });
+        }
+        inner.extend([
             Payload::Notify(Notify::new(notify::INITIAL_CONTACT, Vec::new())),
             Payload::Cp(Cp::request()),
             Payload::Sa(self.esp_proposals(child_spi_in)),
@@ -957,7 +1026,7 @@ impl IkeInitiator {
                 responder: true,
                 selectors: vec![TrafficSelector::any()],
             },
-        ];
+        ]);
         self.phase = Phase::AwaitAuth1;
         self.send_auth_request(now, &inner, out)
     }
@@ -992,8 +1061,13 @@ impl IkeInitiator {
         let mut idr = None;
         let mut auth = None;
         let mut eap = None;
+        let mut cert = None;
         for p in payloads {
             match p {
+                // RFC 7296 §3.6 : le premier CERT porte la clé qui vérifie l'AUTH.
+                Payload::Cert { encoding, data } if cert.is_none() => {
+                    cert = Some((*encoding, data));
+                }
                 Payload::Id {
                     responder: true,
                     id_type,
@@ -1014,16 +1088,41 @@ impl IkeInitiator {
         }
         let idr_body = id_body(idt, idd);
         let sa = self.sa.as_mut().ok_or_else(|| proto("pas de SA"))?;
-        let expect = auth_value(
-            sa.suite.prf,
-            self.cfg.psk.expose_secret().as_bytes(),
-            &sa.msg2,
-            &sa.ni,
-            &sa.keys.sk_pr,
-            &idr_body,
-        );
-        if method != AUTH_METHOD_PSK || !ct_eq(&expect, auth_data) {
-            return Err(FailReason::GatewayAuthFailed);
+        let policy = &self.cfg.responder_auth;
+        match method {
+            AUTH_METHOD_PSK => {
+                if !policy.accepts_psk() {
+                    return Err(FailReason::GatewayAuthMethodRefused(method));
+                }
+                let expect = auth_value(
+                    sa.suite.prf,
+                    self.cfg.psk.expose_secret().as_bytes(),
+                    &sa.msg2,
+                    &sa.ni,
+                    &sa.keys.sk_pr,
+                    &idr_body,
+                );
+                if !ct_eq(&expect, auth_data) {
+                    return Err(FailReason::GatewayAuthFailed);
+                }
+            }
+            AUTH_METHOD_RSA_SIG | AUTH_METHOD_DIGITAL_SIG => {
+                if policy.pins().is_empty() {
+                    return Err(FailReason::GatewayAuthMethodRefused(method));
+                }
+                let Some((CERT_ENCODING_X509, cert_der)) = cert else {
+                    return Err(FailReason::GatewayCertNotPinned);
+                };
+                // Épinglage d'abord : aucune analyse ASN.1 d'un certificat non approuvé.
+                if !pin_matches(cert_der, policy.pins()) {
+                    return Err(FailReason::GatewayCertNotPinned);
+                }
+                let signed =
+                    signed_octets(sa.suite.prf, &sa.msg2, &sa.ni, &sa.keys.sk_pr, &idr_body);
+                verify_auth(method, auth_data, &signed, cert_der)
+                    .map_err(|e| FailReason::GatewaySignatureInvalid(e.to_string()))?;
+            }
+            m => return Err(FailReason::GatewayAuthMethodRefused(m)),
         }
         sa.idr_body = idr_body;
         // Gateway authentifiée : seulement maintenant l'identité EAP part.

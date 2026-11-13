@@ -276,6 +276,23 @@ pub fn auth_value(
     prf.compute(&key, &[real_message, peer_nonce, &maced_id])
 }
 
+/// Octets signés (RFC 7296 §2.15) : `RealMessage | Nonce | prf(SK_p, IDx')`, pour les méthodes
+/// AUTH par signature (1, 14).
+pub fn signed_octets(
+    prf: Prf,
+    real_message: &[u8],
+    peer_nonce: &[u8],
+    sk_p: &[u8],
+    id_body: &[u8],
+) -> Vec<u8> {
+    let maced_id = prf.compute(sk_p, &[id_body]);
+    let mut v = Vec::with_capacity(real_message.len() + peer_nonce.len() + maced_id.len());
+    v.extend_from_slice(real_message);
+    v.extend_from_slice(peer_nonce);
+    v.extend_from_slice(&maced_id);
+    v
+}
+
 /// Comparaison en temps constant.
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.ct_eq(b).into()

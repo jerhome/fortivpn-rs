@@ -157,11 +157,9 @@ impl NetCleanup for AnyCleanup {
 /// Avertissement affiché quand des règles NRPT de stratégie de groupe existent
 /// (décision produit : avertir et continuer, ne jamais toucher à la clé Policies).
 #[cfg_attr(not(windows), allow(dead_code))]
-pub const GPO_NRPT_WARNING: &str = "des règles DNS (NRPT) imposées par stratégie de \
-     groupe (GPO) sont présentes : Windows ignore alors les règles DNS du tunnel ; des \
-     noms internes peuvent être résolus hors tunnel (fuite DNS possible en \
-     full-tunnel). La connexion continue ; voir l'administrateur du poste si la \
-     résolution des noms internes échoue.";
+pub const GPO_NRPT_WARNING: &str = "Windows ignore les règles DNS du tunnel (stratégie de \
+     groupe) ; en tunnel complet, la fuite DNS est bloquée par le pare-feu ; en \
+     split-tunnel, les noms internes peuvent être résolus par le DNS local.";
 
 /// Plafond de la déconnexion du transport quand Windows impose l'arrêt
 /// (`ctrl_close`, `ctrl_logoff`, `ctrl_shutdown`) : il tue le processus après ≈ 5 s.
