@@ -1,0 +1,51 @@
+[package]
+name = "fortivpn-service"
+description = "Service Windows (SYSTEM) piloté par named pipe : protocole, machine d'états, serveur/client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Comme netwin : le code Windows (named pipe + DACL, SCM) a besoin d'`unsafe`, que
+# `[workspace.lints]` interdit sans possibilité de dérogation locale. On recopie les
+# lints du workspace avec `deny` ; seuls les modules `win/*` ont un
+# `#![allow(unsafe_code)]` justifié. La logique (protocole, machine d'états,
+# contrôleur) reste 100 % sûre et testable sous Linux.
+# GARDER SYNCHRONISÉ avec [workspace.lints] du Cargo.toml racine.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"
+
+[dependencies]
+secrecy.workspace = true
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "io-util", "macros"] }
+tracing.workspace = true
+zeroize = { workspace = true, features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+windows-service = "0.8.1"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+] }

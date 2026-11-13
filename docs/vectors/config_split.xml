@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Vecteur fortivpn-rs (docs/protocol.md §3) : réponse de GET /remote/fortisslvpn_xml,
+  cas SPLIT-TUNNEL, IPv4 seulement. Toutes les valeurs sont fictives.
+  Structure calquée sur l'exemple documenté dans openconnect (fortinet.c) et sur les
+  attributs lus par openfortivpn (http.c, parse_xml_config).
+  Les commentaires XML ne figurent PAS dans une vraie réponse (voir
+  fortisslvpn_xml_response.http pour le corps brut).
+  Attention : FortiOS mélange guillemets simples et doubles pour les attributs.
+-->
+<sslvpn-tunnel ver="2" dtls="1" patch="1">
+  <!-- DTLS (hors périmètre) : paramètres de heartbeat du tunnel DTLS -->
+  <dtls-config heartbeat-interval="10" heartbeat-fail-count="10" heartbeat-idle-timeout="10" client-hello-timeout="10"/>
+  <!-- ppp = protocole « v1 » décrit dans cette spec ; tun = protocole « v2 » non-PPP (hors périmètre) -->
+  <tunnel-method value="ppp"/>
+  <tunnel-method value="tun"/>
+  <!-- version FortiOS (information seulement) -->
+  <fos platform="FGVM64" major="7" minor="02" patch="8" build="1639" branch="1639"/>
+  <!-- reconnexion sans ré-authentification autorisée pendant tun-user-ses-timeout s, même IP source exigée -->
+  <auth-ses check-src-ip='1' tun-connect-without-reauth='1' tun-user-ses-timeout='240' />
+  <client-config save-password="off" keep-alive="on" auto-connect="off"/>
+  <ipv4>
+    <!-- serveurs DNS (ordre = priorité) ; 'domain' = suffixe de recherche DNS -->
+    <dns ip="10.0.0.53"/>
+    <dns ip="10.0.0.54" domain="corp.example.com"/>
+    <!-- split-DNS : domaines résolus par des serveurs dédiés -->
+    <split-dns domains='corp.example.com,lab.example.net' dnsserver1='10.0.0.53' dnsserver2='10.0.0.54' />
+    <!-- adresse attribuée (doit correspondre à celle obtenue par IPCP, qui fait foi) -->
+    <assigned-addr ipv4="10.10.0.2"/>
+    <!-- routes à faire passer DANS le tunnel (présence d'au moins une => split-tunnel) -->
+    <split-tunnel-info>
+      <addr ip="10.0.0.0" mask="255.0.0.0"/>
+      <addr ip="172.16.0.0" mask="255.240.0.0"/>
+      <addr ip="192.0.2.128" mask="255.255.255.128"/>
+      <addr ip="198.51.100.7" mask="255.255.255.255"/>
+    </split-tunnel-info>
+    <!-- negate="1" : routes à EXCLURE du tunnel (openfortivpn ne les gère pas) -->
+    <split-tunnel-info negate="1">
+      <addr ip="10.99.0.0" mask="255.255.0.0"/>
+    </split-tunnel-info>
+  </ipv4>
+  <!-- secondes d'inactivité avant coupure par la passerelle -->
+  <idle-timeout val="3600"/>
+  <!-- durée de vie maximale de la session authentifiée (s) -->
+  <auth-timeout val="28800"/>
+</sslvpn-tunnel>

@@ -1,0 +1,13 @@
+# Vendor IDs IKE (hex, 16 octets sauf mention). Sources : strongSwan ike_vendor.c / isakmp_vendor.c,
+# libreswan lib/libswan/vendorid.c (clones 2026-11, strongswan eab0c41, libreswan 769dd6d).
+# Les valeurs MD5 ont été recalculées (printf '<chaîne>' | md5sum).
+
+fortigate                     1d6e178f6c2c0be284985465450fe9d4   # envoyé par FortiGate (IKEv1 et IKEv2), valeur brute (origine non documentée)
+md5("Fortinet Endpoint Control")    b4f01ca951e9da8d0bafbbd34ad3044e   # libreswan VID_FORTINET_ENDPOINT_CONTROL
+md5("forticlient connect license")  4c53427b6d465d1b337bb755a37a7fef   # libreswan VID_FORTINET_CONNECT_LICENSE
+md5("RFC 3947")                     4a131c81070358455c5728f20e95452f   # NAT-T IKEv1 (RFC 3947)
+md5("draft-ietf-ipsec-nat-t-ike-02\n") 90cb80913ebb696e086381b5ec427b1f # NAT-T draft 02 (avec \n)
+xauth (draft-ietf-ipsra-isakmp-xauth-06)  09002689dfd6b712          # 8 octets
+dpd (RFC 3706)                      afcad71368a1f1c96b8696fc77570100
+cisco-unity (md5 tronqué, 01 00)    12f5f28c457168a9702d9fe274cc0100
+ike-fragmentation (Cisco/strongSwan) 4048b7d56ebce88525e7de7f00d6c2d3  # comparaison par préfixe

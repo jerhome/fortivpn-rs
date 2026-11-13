@@ -1,0 +1,10 @@
+# Échec de passage en mode tunnel : réponse HTTP au lieu de trames (cookie refusé,
+# « tunnel mode » non autorisé pour l'utilisateur/portail, session déjà consommée...).
+# Voir aussi framing.hex:err_http_instead_of_ppp.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+HTTP/1.1 403 Forbidden
+Content-Type: text/html
+Content-Length: 0
+
+

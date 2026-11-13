@@ -1,0 +1,12 @@
+# Cas « 2FA requis » (hors MVP) : 200 OK SANS SVPNCOOKIE, corps 'ret=2,...,tokeninfo=...'.
+# Détection (openfortivpn) : pas de cookie + présence d'une clé 'tokeninfo=' dans le corps
+# (clé/valeur séparées par ',', '&', CR ou LF). Le MVP doit lever une erreur claire
+# « authentification à deux facteurs requise, non supportée ». Valeurs fictives (format du
+# faux serveur d'openconnect). tokeninfo=ftm_push => notification push FortiToken Mobile.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Content-Length: 138
+
+ret=2,reqid=12345678,polid=1-1-87654321,grp=staff-grp,portal=full-access,magic=1-23456789,tokeninfo=,chal_msg=Please enter your token code

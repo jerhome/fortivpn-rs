@@ -1,0 +1,51 @@
+# Vecteurs de découpage de flux et d'erreurs de framing 0x5050 — §5.
+# Format : voir docs/vectors/README.md.
+#   - lignes commençant par '#' : commentaires ;
+#   - '@frame <nom> dir=<c2g|g2c|stream> len=<octets>' ouvre un vecteur ;
+#   - les lignes hexa qui suivent (jusqu'au prochain '@frame' ou fin de fichier)
+#     forment les octets EXACTS sur le flux TLS (déchiffré), en-tête 0x5050 inclus.
+#   - c2g = client -> passerelle, g2c = passerelle -> client.
+# Toutes les valeurs (magic, IP, DNS) sont fictives.
+#
+# TLS est un flux d'octets : une lecture peut contenir plusieurs trames, ou une trame
+# partielle. Le décodeur doit bufferiser jusqu'à avoir 6 octets d'en-tête, puis
+# 'longueur PPP' octets, sans présumer d'alignement avec les enregistrements TLS.
+
+
+# Trois trames concaténées dans une seule lecture : lcp_confreq_gateway (22 o),
+# lcp_echo_request_gateway (16 o), ipv4_icmp_echo_reply (68 o). Total 106 octets.
+# Test : le décodeur doit sortir exactement 3 paquets PPP, dans cet ordre.
+# Test complémentaire : découper ce flux à CHAQUE position possible (2 morceaux)
+# et vérifier le même résultat.
+@frame stream_three_frames dir=g2c len=106
+00 16 50 50 00 10 c0 21 01 01 00 0e 01 04 05 4a
+05 06 5e 6f 70 81 00 10 50 50 00 0a c0 21 09 07
+00 08 5e 6f 70 81 00 44 50 50 00 3e 00 21 45 00
+00 3c ab cd 40 00 40 01 7a ca 0a 14 00 0a 0a 0a
+00 02 00 00 cb ba 42 42 00 01 10 11 12 13 14 15
+16 17 18 19 1a 1b 1c 1d 1e 1f 20 21 22 23 24 25
+26 27 28 29 2a 2b 2c 2d 2e 2f
+
+# Erreur : magic 0x5051 au lieu de 0x5050 -> erreur fatale de framing
+# (openfortivpn : « Received bad header from gateway », arrêt du tunnel).
+@frame err_bad_magic dir=g2c len=22
+00 16 50 51 00 10 c0 21 01 01 00 0e 01 04 05 4a
+05 06 5e 6f 70 81
+
+# Erreur : longueur totale 0x17 (23) != 6 + longueur PPP 0x10 (16). Fatal
+# (openfortivpn exige total - 6 == size).
+@frame err_inconsistent_lengths dir=g2c len=23
+00 17 50 50 00 10 c0 21 01 01 00 0e 01 04 05 4a
+05 06 5e 6f 70 81 00
+
+# Erreur : trame sans charge utile (total = 6 < 7). Fatal pour openfortivpn (total < 7).
+@frame err_total_too_small dir=g2c len=6
+00 06 50 50 00 00
+
+# Après 'GET /remote/sslvpn-tunnel', la passerelle répond en HTTP au lieu de passer en mode
+# binaire (cookie invalide/expiré, mode tunnel non autorisé sur le portail, mauvais realm).
+# Détection : les 6 premiers octets valent « HTTP/1 » (48 54 54 50 2f 31).
+# Le vecteur ne contient que la ligne de statut (suite = en-têtes HTTP ordinaires).
+@frame err_http_instead_of_ppp dir=g2c len=24
+48 54 54 50 2f 31 2e 31 20 34 30 33 20 46 6f 72
+62 69 64 64 65 6e 0d 0a

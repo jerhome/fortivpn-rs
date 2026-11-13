@@ -1,0 +1,108 @@
+# Vecteurs LCP (RFC 1661) encapsulés 0x5050 — fortivpn-rs, docs/protocol.md §6.
+# Format : voir docs/vectors/README.md.
+#   - lignes commençant par '#' : commentaires ;
+#   - '@frame <nom> dir=<c2g|g2c|stream> len=<octets>' ouvre un vecteur ;
+#   - les lignes hexa qui suivent (jusqu'au prochain '@frame' ou fin de fichier)
+#     forment les octets EXACTS sur le flux TLS (déchiffré), en-tête 0x5050 inclus.
+#   - c2g = client -> passerelle, g2c = passerelle -> client.
+# Toutes les valeurs (magic, IP, DNS) sont fictives.
+#
+# Rappel de structure (sans HDLC : pas de 0x7e, pas d'échappement, pas de FCS,
+# pas de champ Adresse/Contrôle ff 03, protocole PPP sur 2 octets non compressé) :
+#   [0..1] longueur totale (BE16) = 6 + longueur PPP
+#   [2..3] 50 50
+#   [4..5] longueur PPP (BE16)
+#   [6..7] protocole PPP (c0 21 = LCP)
+#   [8]    code  [9] identifiant  [10..11] longueur LCP (BE16, en-tête LCP inclus)
+#   [12..] options TLV : type(1) longueur(1, TLV inclus) valeur
+
+
+# LCP Configure-Request du client, id=0x01.
+#   00 16 = 22 octets au total ; 50 50 ; 00 10 = 16 octets PPP.
+#   c0 21 LCP ; 01 Configure-Request ; 01 id ; 00 0e = 14 octets.
+#   01 04 05 4a : MRU = 1354 (valeur utilisée par openfortivpn : pppd 'mru 1354').
+#   05 06 1a 2b 3c 4d : Magic-Number = 0x1a2b3c4d (aléatoire en vrai).
+#   Identique octet pour octet à ce qu'émet pppd lancé par openfortivpn
+#   (noaccomp, nopcomp, default-asyncmap => ni ACCM, ni PFC, ni ACFC).
+@frame lcp_confreq_client dir=c2g len=22
+00 16 50 50 00 10 c0 21 01 01 00 0e 01 04 05 4a
+05 06 1a 2b 3c 4d
+
+# LCP Configure-Request de la passerelle, id=0x01 (ILLUSTRATIF : options exactes
+# de la passerelle non vérifiées, cf. « Points non vérifiés »).
+#   MRU 1354, Magic 0x5e6f7081.
+@frame lcp_confreq_gateway dir=g2c len=22
+00 16 50 50 00 10 c0 21 01 01 00 0e 01 04 05 4a
+05 06 5e 6f 70 81
+
+# LCP Configure-Ack du client : code 02, MÊME id (0x01) et MÊMES options
+# (copie octet pour octet) que la requête de la passerelle.
+@frame lcp_confack_client dir=c2g len=22
+00 16 50 50 00 10 c0 21 02 01 00 0e 01 04 05 4a
+05 06 5e 6f 70 81
+
+# LCP Configure-Ack de la passerelle en réponse à lcp_confreq_client.
+# Après l'envoi ET la réception d'un Configure-Ack, LCP est Opened ; on démarre IPCP.
+@frame lcp_confack_gateway dir=g2c len=22
+00 16 50 50 00 10 c0 21 02 01 00 0e 01 04 05 4a
+05 06 1a 2b 3c 4d
+
+# Contre-exemple : Configure-Request proposant aussi ACCM (02), PFC (07) et ACFC (08).
+# À NE PAS émettre ; sert à tester le traitement d'un Configure-Reject.
+#   01 04 05 4a  MRU ; 02 06 00 00 00 00 ACCM ; 05 06 .. Magic ; 07 02 PFC ; 08 02 ACFC.
+@frame lcp_confreq_client_with_accm_pfc_acfc dir=c2g len=32
+00 20 50 50 00 1a c0 21 01 02 00 18 01 04 05 4a
+02 06 00 00 00 00 05 06 1a 2b 3c 4d 07 02 08 02
+
+# LCP Configure-Reject (code 04), id=0x02, listant les options refusées
+# (openconnect : « Fortinet server rejects asyncmap and header compression »).
+# Le client doit retirer ces options et renvoyer un Configure-Request avec un NOUVEL id.
+@frame lcp_confrej_gateway dir=g2c len=22
+00 16 50 50 00 10 c0 21 04 02 00 0e 02 06 00 00
+00 00 07 02 08 02
+
+# LCP Echo-Request (code 09) de la passerelle, id=0x07, données = magic de la passerelle.
+@frame lcp_echo_request_gateway dir=g2c len=16
+00 10 50 50 00 0a c0 21 09 07 00 08 5e 6f 70 81
+
+# LCP Echo-Reply (code 0a), MÊME id (0x07), magic = magic LOCAL du client (0x1a2b3c4d),
+# puis recopie des éventuelles données qui suivaient le magic dans la requête (aucune ici).
+@frame lcp_echo_reply_client dir=c2g len=16
+00 10 50 50 00 0a c0 21 0a 07 00 08 1a 2b 3c 4d
+
+# Keepalive client : LCP Echo-Request id=0x02, magic client.
+@frame lcp_echo_request_client dir=c2g len=16
+00 10 50 50 00 0a c0 21 09 02 00 08 1a 2b 3c 4d
+
+# Réponse attendue de la passerelle : Echo-Reply id=0x02, magic passerelle.
+@frame lcp_echo_reply_gateway dir=g2c len=16
+00 10 50 50 00 0a c0 21 0a 02 00 08 5e 6f 70 81
+
+# LCP Terminate-Request (code 05) du client, id=0x03, sans données.
+# NB : openfortivpn n'en envoie pas (il ferme simplement TLS) ; recommandé quand même.
+@frame lcp_terminate_request_client dir=c2g len=12
+00 0c 50 50 00 06 c0 21 05 03 00 04
+
+# LCP Terminate-Ack (code 06), même id=0x03.
+@frame lcp_terminate_ack_gateway dir=g2c len=12
+00 0c 50 50 00 06 c0 21 06 03 00 04
+
+# Terminate-Request à l'initiative de la passerelle (ex. idle-timeout, déconnexion admin).
+@frame lcp_terminate_request_gateway dir=g2c len=12
+00 0c 50 50 00 06 c0 21 05 09 00 04
+
+# Terminate-Ack du client, même id=0x09 ; ensuite fermer TLS et considérer la session terminée.
+@frame lcp_terminate_ack_client dir=c2g len=12
+00 0c 50 50 00 06 c0 21 06 09 00 04
+
+# IPV6CP (80 57) Configure-Request de la passerelle, option 01 Interface-Identifier (8 octets).
+# Cas d'un client qui ne gère pas IPv6 (MVP) -> répondre par Protocol-Reject (trame suivante).
+@frame ipv6cp_confreq_gateway dir=g2c len=22
+00 16 50 50 00 10 80 57 01 01 00 0e 01 0a 02 00
+c0 ff fe 00 00 01
+
+# LCP Protocol-Reject (code 08), id=0x04, données = protocole rejeté (80 57) puis le paquet
+# IPV6CP rejeté recopié intégralement (à partir de son code), tronqué si > MRU du pair.
+@frame lcp_protocol_reject_ipv6cp_client dir=c2g len=28
+00 1c 50 50 00 16 c0 21 08 04 00 14 80 57 01 01
+00 0e 01 0a 02 00 c0 ff fe 00 00 01

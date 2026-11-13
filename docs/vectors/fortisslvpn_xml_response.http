@@ -1,0 +1,36 @@
+# Réponse de configuration : corps = docs/vectors/config_split.xml SANS ses commentaires XML.
+# openfortivpn n'exige que 'HTTP/1.1 200 OK' puis cherche le document après la ligne vide.
+# Une redirection vers /remote/login (ou 401/403) signifie cookie invalide/expiré.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+HTTP/1.1 200 OK
+Content-Type: text/xml
+Set-Cookie: SVPNCOOKIE=QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTkyMDYzODg0MjAxNw==; path=/; secure; httponly
+Content-Length: 1191
+
+<?xml version="1.0" encoding="utf-8"?>
+<sslvpn-tunnel ver="2" dtls="1" patch="1">
+  <dtls-config heartbeat-interval="10" heartbeat-fail-count="10" heartbeat-idle-timeout="10" client-hello-timeout="10"/>
+  <tunnel-method value="ppp"/>
+  <tunnel-method value="tun"/>
+  <fos platform="FGVM64" major="7" minor="02" patch="8" build="1639" branch="1639"/>
+  <auth-ses check-src-ip='1' tun-connect-without-reauth='1' tun-user-ses-timeout='240' />
+  <client-config save-password="off" keep-alive="on" auto-connect="off"/>
+  <ipv4>
+    <dns ip="10.0.0.53"/>
+    <dns ip="10.0.0.54" domain="corp.example.com"/>
+    <split-dns domains='corp.example.com,lab.example.net' dnsserver1='10.0.0.53' dnsserver2='10.0.0.54' />
+    <assigned-addr ipv4="10.10.0.2"/>
+    <split-tunnel-info>
+      <addr ip="10.0.0.0" mask="255.0.0.0"/>
+      <addr ip="172.16.0.0" mask="255.240.0.0"/>
+      <addr ip="192.0.2.128" mask="255.255.255.128"/>
+      <addr ip="198.51.100.7" mask="255.255.255.255"/>
+    </split-tunnel-info>
+    <split-tunnel-info negate="1">
+      <addr ip="10.99.0.0" mask="255.255.0.0"/>
+    </split-tunnel-info>
+  </ipv4>
+  <idle-timeout val="3600"/>
+  <auth-timeout val="28800"/>
+</sslvpn-tunnel>

@@ -1,0 +1,24 @@
+/target/
+/vendor-ref/
+**/*.rs.bk
+
+# Captures réseau (peuvent contenir cookies/identifiants)
+*.pcap
+*.pcapng
+
+# Secrets / configs locales
+.env
+.env.*
+*.secret
+*.key
+*.pem
+*.p12
+*.pfx
+config.local.*
+/secrets/
+
+# Fuzzing (fuzz/seeds/ et fuzz/regressions/ sont versionnés : petits, déterministes)
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/coverage/
+/fuzz/target/

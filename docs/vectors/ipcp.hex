@@ -1,0 +1,76 @@
+# Vecteurs IPCP (RFC 1332 + RFC 1877 pour DNS) encapsulés 0x5050 — docs/protocol.md §6.4.
+# Format : voir docs/vectors/README.md.
+#   - lignes commençant par '#' : commentaires ;
+#   - '@frame <nom> dir=<c2g|g2c|stream> len=<octets>' ouvre un vecteur ;
+#   - les lignes hexa qui suivent (jusqu'au prochain '@frame' ou fin de fichier)
+#     forment les octets EXACTS sur le flux TLS (déchiffré), en-tête 0x5050 inclus.
+#   - c2g = client -> passerelle, g2c = passerelle -> client.
+# Toutes les valeurs (magic, IP, DNS) sont fictives.
+#
+# Options IPCP : 03 IP-Address (len 6), 81 (=129) Primary-DNS (len 6), 83 (=131) Secondary-DNS.
+# Adresses fictives : client 10.10.0.2, DNS 10.0.0.53 / 10.0.0.54,
+# adresse PPP côté passerelle 169.254.1.1 (illustrative).
+
+
+# IPCP Configure-Request initial du client, id=0x01 : on demande tout à la passerelle.
+#   80 21 IPCP ; 01 ConfReq ; 01 id ; 00 16 = 22 octets.
+#   03 06 00 00 00 00   IP-Address 0.0.0.0 (=> « attribuez-moi une adresse »)
+#   81 06 00 00 00 00   Primary-DNS 0.0.0.0
+#   83 06 00 00 00 00   Secondary-DNS 0.0.0.0
+@frame ipcp_confreq_client_1 dir=c2g len=30
+00 1e 50 50 00 18 80 21 01 01 00 16 03 06 00 00
+00 00 81 06 00 00 00 00 83 06 00 00 00 00
+
+# IPCP Configure-Request de la passerelle annonçant SA propre adresse PPP (variante A).
+# (L'adresse réelle annoncée varie ; certains FortiOS envoient la variante B vide.)
+@frame ipcp_confreq_gateway dir=g2c len=18
+00 12 50 50 00 0c 80 21 01 01 00 0a 03 06 a9 fe
+01 01
+
+# Configure-Ack du client pour la variante A (copie exacte des options, même id).
+@frame ipcp_confack_client dir=c2g len=18
+00 12 50 50 00 0c 80 21 02 01 00 0a 03 06 a9 fe
+01 01
+
+# Variante B : IPCP Configure-Request SANS option (longueur 4). openfortivpn la reconnaît
+# explicitement (io.c, packet_is_end_negociation : len 6, 80 21 01 .. 00 04).
+@frame ipcp_confreq_gateway_empty dir=g2c len=12
+00 0c 50 50 00 06 80 21 01 01 00 04
+
+# Configure-Ack (vide) du client pour la variante B.
+@frame ipcp_confack_client_empty dir=c2g len=12
+00 0c 50 50 00 06 80 21 02 01 00 04
+
+# IPCP Configure-Nak (code 03), id=0x01 : la passerelle fournit les valeurs à utiliser.
+#   03 06 0a 0a 00 02   IP 10.10.0.2
+#   81 06 0a 00 00 35   DNS1 10.0.0.53
+#   83 06 0a 00 00 36   DNS2 10.0.0.54
+@frame ipcp_confnak_gateway dir=g2c len=30
+00 1e 50 50 00 18 80 21 03 01 00 16 03 06 0a 0a
+00 02 81 06 0a 00 00 35 83 06 0a 00 00 36
+
+# Nouveau Configure-Request du client, id=0x02 (nouvel id), reprenant les valeurs du Nak.
+@frame ipcp_confreq_client_2 dir=c2g len=30
+00 1e 50 50 00 18 80 21 01 02 00 16 03 06 0a 0a
+00 02 81 06 0a 00 00 35 83 06 0a 00 00 36
+
+# IPCP Configure-Ack final, id=0x02. Forme exacte détectée par openfortivpn (io.c,
+# packet_is_ip_plus_dns) : data[0..1]=80 21, data[2]=02, data[6]=03, IP en data[8..11],
+# data[12]=81 -> DNS1 en data[14..17], data[18]=83 -> DNS2 en data[20..23]
+# (offsets comptés depuis le protocole PPP, c.-à-d. après l'en-tête 0x5050).
+# Après Ack envoyé + Ack reçu : IPCP Opened, l'interface peut être configurée.
+@frame ipcp_confack_gateway dir=g2c len=30
+00 1e 50 50 00 18 80 21 02 02 00 16 03 06 0a 0a
+00 02 81 06 0a 00 00 35 83 06 0a 00 00 36
+
+# Contre-exemple : pppd par défaut (sans 'novj') propose aussi 02 IP-Compression-Protocol
+# VJ (00 2d, max-slot 0f, comp-slot 01). Un client intégré NE doit PAS le proposer.
+@frame ipcp_confreq_client_with_vj dir=c2g len=36
+00 24 50 50 00 1e 80 21 01 01 00 1c 02 06 00 2d
+0f 01 03 06 00 00 00 00 81 06 00 00 00 00 83 06
+00 00 00 00
+
+# Configure-Reject présumé de la passerelle pour VJ (NON VÉRIFIÉ sur passerelle réelle).
+@frame ipcp_confrej_gateway_vj dir=g2c len=18
+00 12 50 50 00 0c 80 21 04 01 00 0a 02 06 00 2d
+0f 01

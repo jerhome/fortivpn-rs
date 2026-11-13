@@ -1,0 +1,21 @@
+# Trames de transport (hexdumps). Octets en hexadécimal, big-endian.
+
+## 1. IKE sur UDP 500 : message IKE brut (en-tête IKE de 28 octets en tête).
+
+## 2. IKE sur UDP 4500 (RFC 3948 §2.2) : marqueur non-ESP de 4 octets nuls puis message IKE.
+00 00 00 00  | <en-tête IKE : SPIi(8) SPIr(8) NextPayload(1) Version(1)=0x20 ExchType(1) Flags(1) MsgID(4) Length(4)> ...
+
+## 3. ESP sur UDP 4500 (RFC 3948 §2.1) : charge UDP = paquet ESP (SPI non nul en tête).
+SPI(4) Seq(4) IV(8 pour GCM / 16 pour CBC) Payload... Padding PadLen(1) NextHeader(1)=0x04 (IPv4) ICV(16 GCM / 16 HMAC-SHA256-128 / 12 HMAC-SHA1-96)
+
+## 4. NAT-keepalive UDP 4500 (RFC 3948 §2.3) : charge UDP d'un octet.
+ff
+
+## 5. TCP (RFC 8229 / RFC 9329) — exemple : préfixe de flux puis un message IKE de 0x50 octets.
+# Préfixe envoyé une seule fois par l'initiateur TCP au début de chaque connexion :
+49 4b 45 54 43 50                         # "IKETCP"
+# Chaque message : Length(2) = longueur du message + 2 (le champ lui-même) ; IKE précédé du marqueur non-ESP.
+00 56  00 00 00 00  <80 octets de message IKE>     # 0x56 = 2 + 4 + 80
+# ESP : Length(2) puis paquet ESP sans marqueur.
+00 7a  <120 octets ESP, commençant par le SPI non nul>
+# Length 0 ou 1 : erreur fatale, fermer la connexion. Keepalive NAT (0xff, Length=3) : NE PAS envoyer, ignorer en réception.

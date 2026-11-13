@@ -1,0 +1,42 @@
+[package]
+name = "cli"
+description = "Binaire fortivpn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fortivpn"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4.6", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "derive"] }
+dirs = "6.0"
+fortivpn-core = { path = "../core" }
+fortivpn-service = { path = "../service" }
+netproxy = { path = "../netproxy" }
+rpassword = "7.5"
+secrecy.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time"] }
+# Pas de `tracing-log` (pas de pont `log` → rustls reste muet) ni d'`env-filter`.
+toml = { version = "1.2", default-features = false, features = ["std", "parse", "serde"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "fmt", "ansi"] }
+zeroize.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+netlinux = { path = "../netlinux" }
+
+[target.'cfg(windows)'.dependencies]
+netwin = { path = "../netwin" }
+
+[dev-dependencies]
+fortivpn-core = { path = "../core", features = ["test-util"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time", "test-util"] }

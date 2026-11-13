@@ -1,0 +1,27 @@
+[package]
+name = "netlinux"
+description = "NetBackend Linux (TUN, routes, resolv) pour les tests e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bytes.workspace = true
+fortivpn-core = { path = "../core" }
+futures-util.workspace = true
+ipnet.workspace = true
+nix = { workspace = true, features = ["fs", "user"] }
+rtnetlink.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "time", "macros", "sync"] }
+tokio-tun.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+fortivpn-core = { path = "../core", features = ["test-util"] }
+nix = { workspace = true, features = ["fs", "sched", "user"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "time", "macros", "sync"] }

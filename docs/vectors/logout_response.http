@@ -1,0 +1,9 @@
+# Réponse typique (RECONSTITUÉE) : le cookie est effacé (valeur vide, date d'expiration passée).
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+HTTP/1.1 200 OK
+Set-Cookie: SVPNCOOKIE=; path=/; expires=Sun, 11 Mar 1984 12:00:00 GMT; secure; httponly
+Content-Type: text/html
+Content-Length: 43
+
+<html><body>Logout successful</body></html>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Vecteur fortivpn-rs (docs/protocol.md §3) : cas FULL-TUNNEL (aucun <split-tunnel-info>
+  contenant d'<addr>) => tout le trafic IPv4 passe dans le tunnel (route par défaut ou
+  0.0.0.0/1 + 128.0.0.0/1), en conservant une route /32 vers la passerelle via l'interface
+  physique. Pas de domaine de recherche. Valeurs fictives.
+-->
+<sslvpn-tunnel ver="2" dtls="0" patch="1">
+  <tunnel-method value="ppp"/>
+  <fos platform="FG100F" major="6" minor="04" patch="15" build="2095" branch="2095"/>
+  <auth-ses check-src-ip='0' tun-connect-without-reauth='0' tun-user-ses-timeout='30' />
+  <client-config save-password="off" keep-alive="off" auto-connect="off"/>
+  <ipv4>
+    <dns ip="10.0.0.53"/>
+    <assigned-addr ipv4="10.10.0.2"/>
+  </ipv4>
+  <idle-timeout val="300"/>
+  <auth-timeout val="28800"/>
+</sslvpn-tunnel>

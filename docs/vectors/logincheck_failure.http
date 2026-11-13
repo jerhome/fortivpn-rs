@@ -1,0 +1,12 @@
+# Échec d'authentification, variante « ret=0 » (FORME RECONSTITUÉE, non capturée).
+# openfortivpn : 'ret=0' -> ERR_HTTP_PERMISSION (« Authentication failed »).
+# Le Set-Cookie éventuel porte un SVPNCOOKIE VIDE (« SVPNCOOKIE=; ») : à traiter comme un échec
+# (openfortivpn teste tunnel->cookie[11] == '\0', c.-à-d. rien après 'SVPNCOOKIE=').
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+HTTP/1.1 200 OK
+Set-Cookie: SVPNCOOKIE=; path=/; expires=Sun, 11 Mar 1984 12:00:00 GMT; secure; httponly
+Content-Type: text/plain
+Content-Length: 69
+
+ret=0,redir=/remote/login?&err=sslvpn_login_permission_denied&lang=en

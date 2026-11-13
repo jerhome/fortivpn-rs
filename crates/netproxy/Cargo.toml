@@ -1,0 +1,25 @@
+[package]
+name = "netproxy"
+description = "NetBackend en espace utilisateur (sans admin) : pile smoltcp + proxy SOCKS5 + redirections de ports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+fortivpn-core = { path = "../core" }
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "socket-dns"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "net", "io-util", "time", "rt", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+ipnet.workspace = true
+# Pair « passerelle » simulé (écho TCP + DNS UDP) des tests d'intégration.
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "socket-udp"] }
+tokio = { workspace = true, features = ["sync", "net", "io-util", "time", "rt", "rt-multi-thread", "macros"] }

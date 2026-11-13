@@ -1,0 +1,2 @@
+# Noms propres du domaine acceptés sans backticks par clippy::doc_markdown.
+doc-valid-idents = ["IPsec", "FortiGate", "FortiClient", "FortiToken", "FortiOS", "NetBackend", "..", "IPv4", "IPv6"]

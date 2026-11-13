@@ -1,0 +1,25 @@
+[package]
+name = "proto"
+description = "Protocole Fortinet SSL VPN : auth HTTPS, XML, framing 0x5050, PPP (pur, sans I/O OS)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+# http / auth / config (stories 1.1, 2.1) :
+httparse.workspace = true
+ipnet.workspace = true
+quick-xml.workspace = true
+secrecy.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+# Invariants framing/PPP en complément du fuzzing (story 5.2, tests/proptest_*.rs).
+proptest = { version = "1.7", default-features = false, features = ["std"] }

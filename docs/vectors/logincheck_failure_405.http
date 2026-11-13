@@ -1,0 +1,10 @@
+# Échec d'authentification, variante « 405 » : d'après openconnect (fortinet.c), certains FortiOS
+# signalent des identifiants invalides par 'HTTP/1.1 405 Method Not Allowed'.
+# openfortivpn : statut != 200 -> erreur (code HTTP retourné). Corps indicatif.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+HTTP/1.1 405 Method Not Allowed
+Content-Type: text/html
+Content-Length: 44
+
+<html><body>Method Not Allowed</body></html>

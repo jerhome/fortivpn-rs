@@ -1,0 +1,11 @@
+# Optionnel (FortiClient / navigateur ; openfortivpn ne le fait PAS en mode mot de passe).
+# GET de la page de login pour un realm donné ; utile pour récupérer d'éventuels cookies
+# de pré-session et vérifier que le realm existe. Realm fictif : 'staff'.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+GET /remote/login?realm=staff HTTP/1.1
+Host: vpn.example.com:443
+User-Agent: Mozilla/5.0 SV1
+Accept: */*
+
+

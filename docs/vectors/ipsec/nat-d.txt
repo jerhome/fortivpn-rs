@@ -1,0 +1,19 @@
+# NAT_DETECTION_*_IP (IKEv2, RFC 7296 §2.23) = SHA1(SPIi | SPIr | IP | port), port en big-endian 16 bits.
+# Dans IKE_SA_INIT requête, SPIr = 0.
+# Calculé avec python hashlib.
+
+SPIi = 0102030405060708
+SPIr = 0000000000000000
+
+# NAT_DETECTION_SOURCE_IP (type 16388), client 192.0.2.10:500
+input  = 0102030405060708 0000000000000000 c000020a 01f4
+sha1   = 9cdaf8713cea81e287d3c0bacb7db468691dfe58
+
+# NAT_DETECTION_DESTINATION_IP (type 16389), passerelle 198.51.100.1:500
+input  = 0102030405060708 0000000000000000 c6336401 01f4
+sha1   = 3a02de24d181fd88168057d5ab63bd418473444a
+
+# Encapsulation UDP forcée (cf. protocol-ipsec.md §2.4) : envoyer pour SOURCE_IP une valeur
+# qui ne correspond PAS au calcul ci-dessus (ex. SHA1 d'un port aléatoire) ; la passerelle
+# conclut « NAT côté client » et active ESP-in-UDP 4500. Les passerelles de test doivent
+# reproduire ce comportement (strongSwan : encap = yes côté client fait la même chose).

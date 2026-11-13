@@ -1,0 +1,59 @@
+[package]
+name = "netwin"
+description = "NetBackend Windows (Wintun, IP Helper, NRPT)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Seul crate FFI : ne peut pas hériter de `unsafe_code = "forbid"` (non
+# surchargeable). On recopie les lints du workspace avec `deny`, ce qui permet
+# un `#[allow(unsafe_code)]` local et justifié sur les modules FFI.
+# GARDER SYNCHRONISÉ avec [workspace.lints] du Cargo.toml racine.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"
+
+[dependencies]
+# Logique pure (plan de routes, NRPT, journal d'état, moteur d'installation /
+# rollback) : compilée et testée sur toutes les plateformes.
+fortivpn-core = { path = "../core" }
+ipnet = { workspace = true, features = ["serde"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2.workspace = true
+tracing.workspace = true
+
+# FFI Windows : compilé en cross (`x86_64-pc-windows-gnu`), jamais exécuté depuis WSL.
+[target.'cfg(windows)'.dependencies]
+bytes.workspace = true
+libloading = "0.8.9"
+tokio = { workspace = true, features = ["rt", "sync"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WindowsFilteringPlatform",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Rpc",
+    "Win32_System_Threading",
+] }
+wintun = "0.5.1"

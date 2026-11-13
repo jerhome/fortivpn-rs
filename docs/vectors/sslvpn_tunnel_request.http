@@ -1,0 +1,14 @@
+# Passage en mode tunnel, EXACTEMENT comme openfortivpn (tunnel.c, run_tunnel étape 5) :
+# requête minimale, 'Host: sslvpn' littéral, pas de Content-Length, sur une connexion TLS
+# NEUVE (openfortivpn reconnecte TLS juste avant de demander la config XML, puis réutilise
+# cette connexion). En cas de succès AUCUNE réponse HTTP n'est envoyée : le flux devient
+# immédiatement des trames 0x5050 dans les deux sens.
+# openconnect envoie plutôt 'Host: <vrai hôte>' + User-Agent : les deux fonctionnent
+# d'après leurs auteurs.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+GET /remote/sslvpn-tunnel HTTP/1.1
+Host: sslvpn
+Cookie: SVPNCOOKIE=QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTkyMDYzODg0MjAxNw==
+
+

@@ -1,0 +1,16 @@
+# Réponse de succès (FORME RECONSTITUÉE : en-têtes réels non capturés ; le corps 'ret=1,redir=...'
+# et le Set-Cookie SVPNCOOKIE sont ceux attendus par openfortivpn/openconnect).
+# Critères de succès (openfortivpn) : statut 'HTTP/1.1 200 OK' + en-tête Set-Cookie contenant
+# 'SVPNCOOKIE=' avec une valeur NON vide. 'ret=1' dans le corps confirme.
+# Cookie à renvoyer ensuite : 'Cookie: SVPNCOOKIE=<valeur>' (jusqu'au premier ';').
+# Valeur de cookie FICTIVE.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+HTTP/1.1 200 OK
+Date: Sat, 14 Nov 2026 09:00:00 GMT
+Set-Cookie: SVPNCOOKIE=QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTkyMDYzODg0MjAxNw==; path=/; secure; httponly
+Content-Type: text/plain
+X-Frame-Options: SAMEORIGIN
+Content-Length: 35
+
+ret=1,redir=/remote/fortisslvpn_xml

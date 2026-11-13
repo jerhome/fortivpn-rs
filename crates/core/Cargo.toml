@@ -1,0 +1,42 @@
+[package]
+name = "fortivpn-core"
+description = "Session, boucle tunnel tokio, reconnexion ; traits Transport + NetBackend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "fortivpn_core"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+ipnet.workspace = true
+proto = { path = "../proto" }
+ring.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "net", "io-util", "time", "rt", "macros"] }
+tokio-rustls.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+# Active `test-util` (FakeNetBackend) pour les tests d'intégration (tests/e2e_session_mockgw.rs).
+fortivpn-core = { path = ".", features = ["test-util"] }
+# Pair PPP / fausse passerelle pour les tests d'interopérabilité (tests/interop_mockgw.rs).
+# mock-gw ne dépend pas de core : pas de cycle.
+mock-gw = { path = "../../tools/mock-gw" }
+rcgen.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "macros", "time", "net", "io-util", "test-util"] }
+
+[features]
+# Expose les implémentations fictives en mémoire (`FakeNetBackend`, `FakeTransport`)
+# aux autres crates pour leurs tests.
+test-util = []

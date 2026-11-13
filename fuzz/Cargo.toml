@@ -1,0 +1,56 @@
+# Cibles cargo-fuzz (story 5.2). Hors workspace : nécessite nightly
+#   cargo +nightly fuzz run <cible>
+# Voir fuzz/README.md.
+[package]
+name = "proto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Crate autonome : ne fait pas partie du workspace racine (scripts/check.sh reste sur stable).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1.12"
+proto = { path = "../crates/proto" }
+
+[lib]
+name = "fuzz_common"
+path = "src/lib.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "frame_decoder"
+path = "fuzz_targets/frame_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ppp_packet"
+path = "fuzz_targets/ppp_packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ppp_options"
+path = "fuzz_targets/ppp_options.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ppp_session"
+path = "fuzz_targets/ppp_session.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

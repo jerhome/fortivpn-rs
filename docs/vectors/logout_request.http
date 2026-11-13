@@ -1,0 +1,17 @@
+# Déconnexion : openfortivpn ouvre une connexion TLS NEUVE (l'ancienne porte le tunnel) et envoie
+# GET /remote/logout avec le cookie et les en-têtes habituels. La réponse est ignorée.
+#
+# --- message (lignes d'en-tête : LF dans le fichier, CRLF sur le fil) ---
+GET /remote/logout HTTP/1.1
+Host: vpn.example.com:443
+User-Agent: Mozilla/5.0 SV1
+Accept: */*
+Accept-Encoding: identity
+Pragma: no-cache
+Cache-Control: no-store, no-cache, must-revalidate
+If-Modified-Since: Sat, 1 Jan 2000 00:00:00 GMT
+Content-Type: application/x-www-form-urlencoded
+Cookie: SVPNCOOKIE=QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTkyMDYzODg0MjAxNw==
+Content-Length: 0
+
+

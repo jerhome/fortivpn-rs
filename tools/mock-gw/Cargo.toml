@@ -1,0 +1,36 @@
+[package]
+name = "mock-gw"
+description = "Fausse passerelle FortiGate (TLS + auth + XML + PPP) pour les tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "mock_gw"
+
+[[bin]]
+name = "mock-gw"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+httparse.workspace = true
+ipnet.workspace = true
+# Types paquets/framing uniquement (pas d'automate client : le pair PPP est indépendant).
+proto = { path = "../../crates/proto" }
+rcgen.workspace = true
+ring.workspace = true
+rustls.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "time", "macros", "sync", "signal"] }
+tokio-rustls.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+quick-xml.workspace = true
+sha2.workspace = true
