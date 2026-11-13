@@ -54,3 +54,19 @@ slint-build = "=1.13.1"
 fortivpn-core = { path = "../core", features = ["test-util"] }
 i-slint-backend-testing = "=1.13.1"
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time", "test-util"] }
+
+# Zone de notification et notifications système : Windows seulement (sous Linux,
+# tray-icon exige GTK/libappindicator, absents ; la logique pure reste testée partout).
+[target.'cfg(windows)'.dependencies]
+notify-rust = { version = "4", default-features = false }
+tray-icon = { version = "0.24", default-features = false }
+
+# Icône SNI (D-Bus pur Rust, sans GTK ni libdbus) et notifications zbus : Linux seulement.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"], optional = true }
+notify-rust = { version = "4", default-features = false, features = ["z"], optional = true }
+
+[features]
+default = ["linux-tray"]
+# Sans effet hors Linux.
+linux-tray = ["dep:ksni", "dep:notify-rust"]

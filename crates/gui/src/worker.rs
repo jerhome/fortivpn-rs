@@ -28,8 +28,10 @@ use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
-use crate::model::{LogLevel, Mode, ProxyInfo, UiState};
-use crate::settings::{SettingsForm, blank_config, load_mode, save_mode};
+use crate::model::{LogLevel, Mode, Phase, ProxyInfo, UiState};
+use crate::settings::{
+    SettingsForm, blank_config, load_close_to_tray, load_mode, save_close_to_tray, save_mode,
+};
 
 /// Notification du worker vers l'interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +65,10 @@ pub struct Shared {
     pub service_available: bool,
     /// Demande d'ouverture de l'écran Réglages (consommée par le rendu).
     pub open_settings: bool,
+    /// Fermer la fenêtre la réduit dans la zone de notification.
+    pub close_to_tray: bool,
+    /// Dernière phase ayant donné lieu à l'évaluation d'une notification.
+    pub notified_phase: Phase,
 }
 
 impl Shared {
@@ -71,6 +77,7 @@ impl Shared {
         Self {
             ui: UiState::new(),
             service_available: true,
+            close_to_tray: true,
             ..Self::default()
         }
     }
@@ -404,7 +411,14 @@ impl Worker {
         } else {
             mode
         };
-        self.sink.update(|s, _| s.pending_mode = Some(mode));
+        let close_to_tray = self
+            .config_path()
+            .ok()
+            .is_none_or(|p| load_close_to_tray(&p));
+        self.sink.update(|s, _| {
+            s.pending_mode = Some(mode);
+            s.close_to_tray = close_to_tray;
+        });
         let first_run = self.load_settings().await;
         if first_run {
             self.sink.update(|s, _| s.open_settings = true);
@@ -468,7 +482,9 @@ impl Worker {
                 };
                 let c = config.unwrap_or_else(blank_config);
                 self.sink.update(|s, _| {
-                    s.pending_form = Some(SettingsForm::from_config(&c));
+                    let mut form = SettingsForm::from_config(&c);
+                    form.close_to_tray = s.close_to_tray;
+                    s.pending_form = Some(form);
                     s.pending_username = Some(c.username.clone());
                     s.ui.host.clone_from(&c.host);
                     s.ui.reconnect_auto = c.reconnect.enabled;
@@ -484,7 +500,9 @@ impl Worker {
                 // Fichier illisible : l'écran Réglages reste utilisable (formulaire vide).
                 let c = blank_config();
                 self.sink.update(|s, _| {
-                    s.pending_form = Some(SettingsForm::from_config(&c));
+                    let mut form = SettingsForm::from_config(&c);
+                    form.close_to_tray = s.close_to_tray;
+                    s.pending_form = Some(form);
                     s.settings_message = format!("Lecture impossible : {e}");
                     s.settings_ok = false;
                     s.busy = false;
@@ -498,6 +516,7 @@ impl Worker {
     async fn save_settings(&mut self, form: SettingsForm) {
         self.sink.update(|s, _| s.busy = true);
         let base = self.loaded.clone().unwrap_or_else(blank_config);
+        let close_to_tray = form.close_to_tray;
         let outcome = match form.to_config(&base) {
             Err(e) => Err(e),
             Ok(config) => match self.save(config.clone()).await {
@@ -507,8 +526,14 @@ impl Worker {
         };
         match outcome {
             Ok((config, path)) => {
+                if let Err(e) = save_close_to_tray(&path, close_to_tray) {
+                    tracing::debug!("option de la zone de notification non mémorisée : {e}");
+                }
                 self.sink.update(|s, ts| {
-                    s.pending_form = Some(SettingsForm::from_config(&config));
+                    s.close_to_tray = close_to_tray;
+                    let mut form = SettingsForm::from_config(&config);
+                    form.close_to_tray = close_to_tray;
+                    s.pending_form = Some(form);
                     s.pending_username = Some(config.username.clone());
                     if !s.ui.phase.is_active() {
                         s.ui.host.clone_from(&config.host);

@@ -13,6 +13,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::model::{Mode, STEP_LABELS, StepState, format_step};
 use crate::settings::SettingsForm;
+use crate::tray::{self, TrayAction, TrayView};
 use crate::ui::{LogItem, MainWindow, RedirItem, StepItem};
 use crate::worker::{Command, Notice, Shared, Sink, WorkerHandle};
 
@@ -86,6 +87,7 @@ pub fn render(win: &MainWindow, shared: &mut Shared, now: Instant) {
         win.set_s_socks_port(form.socks_port.into());
         win.set_s_forwards(form.forwards.into());
         win.set_s_reconnect(form.reconnect);
+        win.set_s_close_to_tray(form.close_to_tray);
     }
     win.set_service_available(shared.service_available);
     win.set_pin_offer(ui.visible_pin_offer().unwrap_or_default().into());
@@ -111,6 +113,7 @@ pub fn read_form(win: &MainWindow) -> SettingsForm {
         socks_port: win.get_s_socks_port().into(),
         forwards: win.get_s_forwards().into(),
         reconnect: win.get_s_reconnect(),
+        close_to_tray: win.get_s_close_to_tray(),
     }
 }
 
@@ -182,11 +185,57 @@ pub fn wire(win: &MainWindow, sink: &Sink, worker: &WorkerHandle) {
             w.send(Command::SaveSettings(read_form(&win)));
         }
     });
-    let w = worker.clone();
+    let (w, s) = (worker.clone(), sink.clone());
     win.window().on_close_requested(move || {
+        if tray::is_installed() && s.lock().close_to_tray {
+            // Réduit dans la zone de notification : la session continue.
+            return slint::CloseRequestResponse::HideWindow;
+        }
         w.send(Command::Quit);
         slint::CloseRequestResponse::KeepWindowShown
     });
+}
+
+/// Icône et notifications : suit l'état partagé (thread UI).
+fn sync_tray(win: &MainWindow, shared: &mut Shared) {
+    tray::update(&TrayView::of(shared.ui.phase, &shared.ui.host));
+    let prev = std::mem::replace(&mut shared.notified_phase, shared.ui.phase);
+    // Fenêtre visible : l'état s'y lit déjà, pas de notification redondante.
+    if !win.window().is_visible()
+        && let Some(t) = tray::toast(prev, &shared.ui)
+    {
+        tray::notify(&t);
+    }
+}
+
+/// Affiche et ramène la fenêtre au premier plan.
+fn show_window(win: &MainWindow) {
+    let _ = win.show();
+}
+
+/// Crée l'icône et route ses actions vers la fenêtre et le worker (best effort :
+/// sans zone de notification, la fenêtre garde son comportement classique).
+fn install_tray(win: &MainWindow, sink: &Sink, worker: &WorkerHandle) {
+    let (weak, sink, worker) = (win.as_weak(), sink.clone(), worker.clone());
+    let result = tray::install(move |action| {
+        let (weak, sink, worker) = (weak.clone(), sink.clone(), worker.clone());
+        let _ = slint::invoke_from_event_loop(move || {
+            let phase = sink.lock().ui.phase;
+            match action.resolve(phase) {
+                TrayAction::Open | TrayAction::Connect => {
+                    if let Some(win) = weak.upgrade() {
+                        show_window(&win);
+                    }
+                }
+                TrayAction::Disconnect => worker.send(Command::Disconnect),
+                TrayAction::Quit => worker.send(Command::Quit),
+                TrayAction::Toggle => {}
+            }
+        });
+    });
+    if let Err(e) = result {
+        tracing::debug!("pas d'icône de notification : {e}");
+    }
 }
 
 /// Première lettre en majuscule (texte affiché).
@@ -211,6 +260,7 @@ pub fn run(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error
                 if let Some(win) = weak.upgrade() {
                     let mut guard = shared.lock().unwrap_or_else(PoisonError::into_inner);
                     render(&win, &mut guard, Instant::now());
+                    sync_tray(&win, &mut guard);
                 }
             }
             Notice::Quit => {
@@ -225,6 +275,7 @@ pub fn run(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error
     }
     let (worker, thread) = crate::worker::spawn(sink.clone(), config_path)?;
     wire(&win, &sink, &worker);
+    install_tray(&win, &sink, &worker);
     worker.send(Command::Startup);
 
     // Durée de session : mise à jour chaque seconde, sans repasser par le worker.
@@ -243,7 +294,8 @@ pub fn run(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error
     );
 
     win.show()?;
-    slint::run_event_loop()?;
+    // Fenêtre masquée (réduite dans la zone de notification) : la boucle continue.
+    slint::run_event_loop_until_quit()?;
     drop(timer);
     let _ = thread.join();
     Ok(())

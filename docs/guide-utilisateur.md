@@ -126,3 +126,21 @@ Par défaut, le certificat de la passerelle est validé par les racines du syst�
 - **Droits insuffisants (code 6)** sous Linux : lancer avec `sudo`.
 - **Code 7** : une autre instance est active (autre fenêtre ou service) ; la fermer d'abord.
 - **DNS interne sous Linux** : le DNS du tunnel est seulement journalisé, `/etc/resolv.conf` n'est pas modifié. Utiliser des adresses IP, ou le mode proxy (le SOCKS5 résout les noms via les DNS du tunnel).
+
+## Interface graphique sous Linux (X11 / Wayland)
+
+Installation locale, sans droits administrateur (`fortivpn-gui` doit être dans le `PATH`,
+par ex. `~/.local/bin`) :
+
+```
+install -Dm755 target/release/fortivpn-gui ~/.local/bin/fortivpn-gui
+install -Dm644 packaging/linux/fortivpn-gui.desktop ~/.local/share/applications/fortivpn-gui.desktop
+install -Dm644 packaging/linux/fortivpn-gui.svg ~/.local/share/icons/hicolor/scalable/apps/fortivpn-gui.svg
+update-desktop-database ~/.local/share/applications 2>/dev/null || true
+```
+
+- L'icône de notification utilise le protocole StatusNotifierItem (D-Bus, sans GTK). Elle
+  nécessite un hôte SNI : KDE, XFCE, ou GNOME avec l'extension « AppIndicator ». Sans hôte
+  (par ex. WSLg), elle est ignorée silencieusement et fermer la fenêtre quitte l'application.
+- Le thème est toujours sombre. Le message `Error watching for xdg color schemes`, émis par
+  Slint sur la sortie d'erreur quand le portail XDG est absent, est sans conséquence.

@@ -22,3 +22,6 @@ config.local.*
 /fuzz/corpus/
 /fuzz/coverage/
 /fuzz/target/
+
+# Artefacts de distribution (scripts/package.sh)
+/dist/

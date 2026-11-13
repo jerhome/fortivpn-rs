@@ -31,6 +31,9 @@ pub struct SettingsForm {
     pub forwards: String,
     /// Reconnexion automatique.
     pub reconnect: bool,
+    /// Fermer la fenêtre la réduit dans la zone de notification (fichier d'état,
+    /// pas `config.toml`).
+    pub close_to_tray: bool,
 }
 
 impl SettingsForm {
@@ -59,6 +62,7 @@ impl SettingsForm {
                 .collect::<Vec<_>>()
                 .join(", "),
             reconnect: config.reconnect.enabled,
+            close_to_tray: true,
         }
     }
 
@@ -157,35 +161,71 @@ pub fn state_path(config_path: &Path) -> PathBuf {
     config_path.with_file_name("gui-state.toml")
 }
 
-/// Dernier mode mémorisé (`None` : fichier absent ou illisible).
-pub fn load_mode(config_path: &Path) -> Option<Mode> {
+/// Valeur brute d'une clé du fichier d'état (`clé = valeur`, une par ligne).
+fn state_value(config_path: &Path, key: &str) -> Option<String> {
     let text = std::fs::read_to_string(state_path(config_path)).ok()?;
     text.lines().find_map(|l| {
-        match l
-            .trim()
-            .strip_prefix("mode")?
-            .trim()
-            .strip_prefix('=')?
-            .trim()
-        {
-            "\"service\"" => Some(Mode::Service),
-            "\"proxy\"" => Some(Mode::Proxy),
-            _ => None,
-        }
+        let rest = l.trim().strip_prefix(key)?.trim().strip_prefix('=')?;
+        Some(rest.trim().to_owned())
     })
 }
 
-/// Mémorise le mode (création du dossier ; meilleur effort, l'erreur est renvoyée).
-pub fn save_mode(config_path: &Path, mode: Mode) -> std::io::Result<()> {
+/// Écrit une clé du fichier d'état en conservant les autres (création du dossier).
+fn set_state_value(config_path: &Path, key: &str, value: &str) -> std::io::Result<()> {
     let path = state_path(config_path);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut out: String = old
+        .lines()
+        .filter(|l| {
+            l.trim()
+                .strip_prefix(key)
+                .is_none_or(|r| !r.trim_start().starts_with('='))
+        })
+        .fold(String::new(), |mut acc, l| {
+            acc.push_str(l);
+            acc.push('\n');
+            acc
+        });
+    out.push_str(key);
+    out.push_str(" = ");
+    out.push_str(value);
+    out.push('\n');
+    std::fs::write(path, out)
+}
+
+/// Dernier mode mémorisé (`None` : fichier absent ou illisible).
+pub fn load_mode(config_path: &Path) -> Option<Mode> {
+    match state_value(config_path, "mode")?.as_str() {
+        "\"service\"" => Some(Mode::Service),
+        "\"proxy\"" => Some(Mode::Proxy),
+        _ => None,
+    }
+}
+
+/// Mémorise le mode (création du dossier ; meilleur effort, l'erreur est renvoyée).
+pub fn save_mode(config_path: &Path, mode: Mode) -> std::io::Result<()> {
     let name = match mode {
         Mode::Service => "service",
         Mode::Proxy => "proxy",
     };
-    std::fs::write(path, format!("mode = \"{name}\"\n"))
+    set_state_value(config_path, "mode", &format!("\"{name}\""))
+}
+
+/// Option « fermer la fenêtre = réduire dans la zone de notification » (défaut : oui).
+pub fn load_close_to_tray(config_path: &Path) -> bool {
+    state_value(config_path, "close_to_tray").is_none_or(|v| v != "false")
+}
+
+/// Mémorise l'option « fermer = réduire dans la zone de notification ».
+pub fn save_close_to_tray(config_path: &Path, on: bool) -> std::io::Result<()> {
+    set_state_value(
+        config_path,
+        "close_to_tray",
+        if on { "true" } else { "false" },
+    )
 }
 
 #[cfg(test)]
@@ -200,6 +240,23 @@ mod tests {
         save_mode(&cfg, Mode::Service).unwrap();
         assert_eq!(load_mode(&cfg), Some(Mode::Service));
         save_mode(&cfg, Mode::Proxy).unwrap();
+        assert_eq!(load_mode(&cfg), Some(Mode::Proxy));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn close_to_tray_defaults_on_and_coexists_with_mode() {
+        let dir = std::env::temp_dir().join(format!("fvpn-gui-tray-{}", std::process::id()));
+        let cfg = dir.join("config.toml");
+        assert!(load_close_to_tray(&cfg));
+        save_mode(&cfg, Mode::Service).unwrap();
+        save_close_to_tray(&cfg, false).unwrap();
+        assert!(!load_close_to_tray(&cfg));
+        assert_eq!(load_mode(&cfg), Some(Mode::Service));
+        save_mode(&cfg, Mode::Proxy).unwrap();
+        assert!(!load_close_to_tray(&cfg));
+        save_close_to_tray(&cfg, true).unwrap();
+        assert!(load_close_to_tray(&cfg));
         assert_eq!(load_mode(&cfg), Some(Mode::Proxy));
         std::fs::remove_dir_all(&dir).unwrap();
     }

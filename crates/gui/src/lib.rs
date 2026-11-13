@@ -2,6 +2,7 @@
 //!
 //! - [`model`] : état d'affichage pur (événements de session → écrans, étapes, journal) ;
 //! - [`settings`] : formulaire ⇄ `config.toml` (jamais de mot de passe) ;
+//! - [`tray`] : icône de zone de notification et notifications (Windows) ;
 //! - [`worker`] : runtime tokio sur un thread dédié (I/O, session, service) ;
 //! - [`app`] : fenêtre Slint, rendu de l'état et câblage des callbacks.
 //!
@@ -11,6 +12,7 @@
 pub mod app;
 pub mod model;
 pub mod settings;
+pub mod tray;
 pub mod worker;
 
 #[allow(

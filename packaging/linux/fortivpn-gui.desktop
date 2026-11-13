@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=fortivpn
+GenericName=Client VPN Fortinet
+Comment=Client Fortinet SSL VPN
+Exec=fortivpn-gui
+Icon=fortivpn-gui
+Terminal=false
+Categories=Network;Security;
+StartupWMClass=fortivpn-gui
+Keywords=vpn;fortinet;fortigate;

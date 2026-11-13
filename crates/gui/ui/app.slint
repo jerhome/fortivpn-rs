@@ -1,7 +1,7 @@
 // Interface fortivpn-rs, d'après docs/gui/maquette.html (thème sombre, ~420x640).
 // Aucun état métier ici : tout vient de `UiState` (src/model.rs) via les propriétés.
 
-import { AboutSlint } from "std-widgets.slint";
+import { AboutSlint, Palette } from "std-widgets.slint";
 
 export global Theme {
     out property <color> bg: #0b0c10;
@@ -358,6 +358,8 @@ export component MainWindow inherits Window {
     default-font-family: Theme.font;
     default-font-size: 14px;
     preferred-width: 420px;
+    // Thème sombre forcé : indépendant du portail XDG (absent sous WSLg, etc.).
+    init => { Palette.color-scheme = ColorScheme.dark; }
     preferred-height: 640px;
     min-width: 420px;
     min-height: 640px;
@@ -405,6 +407,7 @@ export component MainWindow inherits Window {
     in-out property <string> s-socks-port;
     in-out property <string> s-forwards;
     in-out property <bool> s-reconnect: true;
+    in-out property <bool> s-close-to-tray: true;
 
     callback connect();
     callback cancel();
@@ -728,6 +731,13 @@ export component MainWindow inherits Window {
                         Text { text: "Reconnexion automatique"; color: Theme.text; font-size: 14px; vertical-alignment: center; }
                         Rectangle { }
                         Switch { on <=> root.s-reconnect; y: 0px; }
+                    }
+                }
+                Card {
+                    HorizontalLayout {
+                        Text { text: "Fermer = réduire dans la zone de notification"; color: Theme.text; font-size: 14px; vertical-alignment: center; }
+                        Rectangle { }
+                        Switch { on <=> root.s-close-to-tray; y: 0px; }
                     }
                 }
                 if root.settings-message != "": Text {
