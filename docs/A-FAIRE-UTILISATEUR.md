@@ -1,6 +1,6 @@
 # Guide de test — à faire par l'utilisateur
 
-Dernière mise à jour : 2026-11-13 ~23h. Binaires dans `~/fortivpn-dist/` (voir `BUILD.txt`) ;
+Dernière mise à jour : 2026-11-13 ~23h15 (binaires du commit 3e0be66). Binaires dans `~/fortivpn-dist/` (voir `BUILD.txt`) ;
 depuis Windows : `\\wsl.localhost\Debian\home\<utilisateur>\fortivpn-dist\`.
 Rien ici ne bloque les agents. Les logs ne contiennent jamais ton mot de passe.
 
@@ -17,6 +17,7 @@ Valide le correctif « filtre IPv6 » (coupures à ~40 s auparavant).
 ### L2 — Interface graphique Linux (WSLg, 2 min)
 1. `~/fortivpn-dist/fortivpn-gui-linux` (**sans sudo**).
 2. Vérifier : Réglages s'ouvre, mode Proxy, connexion, écran « Connecté », « À propos » (Made with Slint), déconnexion.
+   (Sous WSLg il n'y a pas de zone de notification : c'est normal que l'icône n'apparaisse pas. Raccourci de bureau optionnel : `~/fortivpn-dist/linux/`.)
 3. Test : `curl --socks5-hostname 127.0.0.1:<port socks> http://<site interne>`.
 
 ### L3 — Second compte VPN refusé sans cookie (diagnostic, 1 min)
@@ -29,7 +30,8 @@ Valide le correctif « filtre IPv6 » (coupures à ~40 s auparavant).
 1. Copier `fortivpn-gui.exe` dans un dossier local (ex. `%USERPROFILE%\fortivpn\`), puis dans PowerShell : `Unblock-File $env:USERPROFILE\fortivpn\fortivpn-gui.exe`.
 2. Double-clic : au premier lancement, **Réglages s'ouvre tout seul** → passerelle, port 443, utilisateur, port SOCKS (**18080** recommandé, voir W2) → Enregistrer.
 3. Mode **Proxy**, mot de passe, Connecter. Si le certificat est refusé : bouton « Épingler cette empreinte » (après vérification).
-4. Navigateur : **Firefox** → Paramètres réseau → proxy manuel, SOCKS v5 `127.0.0.1` port `18080`, cocher « DNS distant ». Ouvrir un site interne.
+4. Vérifier l'**icône de la zone de notification** (gris → orange → vert), son menu, et qu'en fermant la fenêtre l'appli reste dans la zone (option dans Réglages) ; notification « connecté en X ms ».
+5. Navigateur : **Firefox** → Paramètres réseau → proxy manuel, SOCKS v5 `127.0.0.1` port `18080`, cocher « DNS distant ». Ouvrir un site interne.
 
 ### W2 — Message de port (1 min)
 1. Si l'interface affiche une erreur de port : noter le code `os error 10013` (port **réservé par Windows**) ou `10048` (**déjà utilisé**).
