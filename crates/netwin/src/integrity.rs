@@ -5,6 +5,7 @@
 //! Windows par `ConvertSidToStringSidW`. Compilé et testé partout.
 
 use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
@@ -46,6 +47,25 @@ pub(crate) const WRITE_MASK: u32 = 0x0000_0002
     | 0x4000_0000
     | 0x0200_0000;
 
+/// Droits permettant de **renommer, supprimer ou remplacer** un dossier ou l'un
+/// de ses enfants (revue 5.3 passe 2, F1) : `FILE_DELETE_CHILD`, `DELETE`,
+/// `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL`, `GENERIC_WRITE`, `MAXIMUM_ALLOWED`.
+/// Créer un fichier ou un sous-dossier dans un ancêtre (`FILE_ADD_FILE`,
+/// `FILE_ADD_SUBDIRECTORY`, p. ex. `C:\` pour les utilisateurs) est sans danger :
+/// cela ne remplace pas un enfant existant.
+pub(crate) const ANCESTOR_WRITE_MASK: u32 =
+    0x0000_0040 | 0x0001_0000 | 0x0004_0000 | 0x0008_0000 | 0x1000_0000 | 0x4000_0000 | 0x0200_0000;
+
+/// Ancêtres de `path`, du plus proche à la racine du volume incluse (sans
+/// `path` lui-même ni le préfixe seul `\\?\C:`).
+pub(crate) fn ancestors_of(path: &Path) -> Vec<PathBuf> {
+    path.ancestors()
+        .skip(1)
+        .filter(|p| p.has_root() && (p.file_name().is_some() || p.parent().is_none()))
+        .map(Path::to_path_buf)
+        .collect()
+}
+
 /// ACE de la DACL, telle que lue par le code Windows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Ace {
@@ -75,6 +95,17 @@ pub(crate) enum Ace {
 ///
 /// `dacl` vaut `None` pour une DACL nulle (accès total à tous).
 pub(crate) fn check_admin_only(owner: &str, dacl: Option<&[Ace]>) -> Result<(), String> {
+    check_with_mask(owner, dacl, WRITE_MASK)
+}
+
+/// Comme [`check_admin_only`], pour un **ancêtre** du dossier d'installation :
+/// seuls les droits de renommage / suppression / changement de DACL comptent
+/// ([`ANCESTOR_WRITE_MASK`]).
+pub(crate) fn check_ancestor(owner: &str, dacl: Option<&[Ace]>) -> Result<(), String> {
+    check_with_mask(owner, dacl, ANCESTOR_WRITE_MASK)
+}
+
+fn check_with_mask(owner: &str, dacl: Option<&[Ace]>, write_mask: u32) -> Result<(), String> {
     if !TRUSTED_OWNERS.contains(&owner) {
         return Err(format!(
             "propriétaire non administrateur ({owner}) ; attendu SYSTEM, Administrateurs ou TrustedInstaller"
@@ -91,7 +122,7 @@ pub(crate) fn check_admin_only(owner: &str, dacl: Option<&[Ace]>) -> Result<(), 
                 inherit_only,
             } => {
                 if !inherit_only
-                    && mask & WRITE_MASK != 0
+                    && mask & write_mask != 0
                     && !TRUSTED_WRITERS.contains(&sid.as_str())
                 {
                     return Err(format!(
@@ -258,6 +289,47 @@ mod tests {
         let mut dacl = program_files();
         dacl.push(Ace::UnknownAllow { ace_type: 5 });
         assert!(check_admin_only(SID_ADMINISTRATORS, Some(&dacl)).is_err());
+    }
+
+    #[test]
+    fn ancestors_accept_add_rights_but_not_rename_rights() {
+        // Racine de volume typique : les utilisateurs peuvent y créer des dossiers.
+        let mut root = program_files();
+        root.push(allow(AUTH_USERS, 0x0000_0004));
+        assert!(check_admin_only(SID_ADMINISTRATORS, Some(&root)).is_err());
+        assert_eq!(check_ancestor(SID_ADMINISTRATORS, Some(&root)), Ok(()));
+        // Mais DELETE_CHILD / DELETE / WRITE_DAC / WRITE_OWNER / GENERIC_* : refusés.
+        for mask in [
+            0x40,
+            0x0001_0000,
+            0x0004_0000,
+            0x0008_0000,
+            0x1000_0000,
+            0x4000_0000,
+        ] {
+            let mut dacl = program_files();
+            dacl.push(allow(USERS, mask));
+            assert!(
+                check_ancestor(SID_ADMINISTRATORS, Some(&dacl)).is_err(),
+                "{mask:#x}"
+            );
+        }
+        assert!(check_ancestor("S-1-5-21-1-2-3-1001", Some(&program_files())).is_err());
+        assert!(check_ancestor(SID_SYSTEM, None).is_err());
+    }
+
+    #[test]
+    fn ancestor_chain_reaches_the_root() {
+        let a = ancestors_of(Path::new("/opt/tools/fortivpn"));
+        assert_eq!(
+            a,
+            [
+                PathBuf::from("/opt/tools"),
+                PathBuf::from("/opt"),
+                PathBuf::from("/")
+            ]
+        );
+        assert!(ancestors_of(Path::new("/")).is_empty());
     }
 
     #[test]

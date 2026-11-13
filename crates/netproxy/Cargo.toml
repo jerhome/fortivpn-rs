@@ -20,6 +20,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 ipnet.workspace = true
+# E2E (tests/e2e_mockgw.rs) : fausse passerelle TLS + PPP.
+mock-gw = { path = "../../tools/mock-gw" }
 # Pair « passerelle » simulé (écho TCP + DNS UDP) des tests d'intégration.
 smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "socket-udp"] }
 tokio = { workspace = true, features = ["sync", "net", "io-util", "time", "rt", "rt-multi-thread", "macros"] }

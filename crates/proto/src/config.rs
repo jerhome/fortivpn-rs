@@ -714,7 +714,8 @@ mod tests {
                     i % 256
                 )
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .concat();
         let xml = wrap(format!(
             "<ipv4><split-tunnel-info>{addrs}</split-tunnel-info></ipv4>"
         ));
@@ -733,7 +734,8 @@ mod tests {
         ));
         let dns: String = (1..=9)
             .map(|i| format!("<dns ip=\"10.0.0.{i}\"/>"))
-            .collect();
+            .collect::<Vec<_>>()
+            .concat();
         let xml = wrap(format!("<ipv4>{dns}</ipv4>"));
         assert!(matches!(
             parse_config(xml.as_bytes()),

@@ -62,8 +62,13 @@ uniquement sur demande explicite de l'utilisateur (story **3.W**).
       M1 mutex instance unique, E2 blocage IPv6 full-tunnel, M2 /32 vers DNS tunnel, M3 NRPT GPO, M4 intégrité wintun.dll, F3 LUID. **MVP**
 - [x] **3.S-L** (TH) Correctifs sécurité netlinux : E2 blackhole IPv6, M2 /32 DNS, F1 resolv par fd/O_NOFOLLOW.
 - [x] **3.F** (WN) Filtres WFP en session dynamique : blocage IPv6 hors tunnel (ALE_AUTH_CONNECT_V6/RECV_ACCEPT_V6), LLMNR/NBT-NS/mDNS (UDP 5355/137/5353) hors tunnel en full-tunnel ; sert de kill-switch. (revue 5.3 E2/F4)
-- [ ] **3.S2** Correctifs revue 5.3 passe 2 (docs/security/review-5.3-pass2.md), par priorité : M3 pipe (propriétaire de session + limitation d'essais), M2 WFP maintenu pendant Reconnecting, M1 bornes XML/routes, M4 verrou d'instance par fichier admin-only, F1 ACL des ancêtres + contrôle au démarrage du service, F3 borne du tampon `out`, F2 parseur chunked incrémental, F5 plusieurs `trusted_cert`.
-- [ ] **3.W** Recette sous Windows (déclenchée par l'utilisateur).
+- [x] **3.S2** Correctifs revue 5.3 passe 2 (docs/security/review-5.3-pass2.md), par priorité : M3 pipe (propriétaire de session + limitation d'essais), M2 WFP maintenu pendant Reconnecting, M1 bornes XML/routes, M4 verrou d'instance par fichier admin-only, F1 ACL des ancêtres + contrôle au démarrage du service, F3 borne du tampon `out`, F2 parseur chunked incrémental, F5 plusieurs `trusted_cert`.
+- [ ] **3.W** Recette sous Windows (déclenchée par l'utilisateur). Points ajoutés par 3.S2 partie B :
+  - M3 : 2 comptes (RDP/changement rapide) : B ne peut ni `disconnect` ni voir tunnel/étapes de la session de A (`status` = état seul) ; un admin élevé peut couper ; `ImpersonateNamedPipeClient` à SECURITY_IDENTIFICATION donne bien SID + groupe Administrateurs activé ; 3 mots de passe faux -> 30 s, 4 -> 60 s, 5 -> blocage 15 min (message `rate_limited`), sans mot de passe dans `service.log`.
+  - M4 : un utilisateur standard ne peut pas créer/ouvrir `%ProgramData%\fortivpn-rs\instance.lock` ni le dossier ; 2e instance (service + CLI admin) -> « autre instance active » ; après crash, le fichier résiduel est rouvert ; le dossier créé par `create_admin_dir` a la DACL SY+BA héritée.
+  - F1 : `service install`/`service run` refusés si un ancêtre du dossier de l'exe accorde DELETE_CHILD/WRITE_DAC aux Users (ex. `C:\Tools` modifiable) ; acceptés sous `C:\Program Files` ; la racine `C:\` (Users : create folders) n'est pas refusée à tort ; `\\?\` canonicalisé accepté par GetNamedSecurityInfoW.
+  - M2 : full-tunnel, couper la connexion TLS (RST) : pendant `Reconnecting` aucun paquet hors passerelle/DHCP/bouclage (IPv6, LLMNR, DNS) ; la passerelle reste joignable ; après reconnexion le trafic passe par le tunnel et le bloc disparaît ; `disconnect` pendant Reconnecting retire tout (`FwpmEngineClose0`) ; FWP_BYTE_ARRAY16 (passerelle IPv6) et UINT32 (IPv4, ordre hôte) acceptés par FwpmFilterAdd0.
+  - F5 : `trusted_cert = ["a", "b"]` accepté ; ancien format chaîne inchangé. 7.1 : config service avec `[proxy]` -> erreur `config` claire.
 
 ## Epic 4 — Robustesse & confort
 
@@ -78,7 +83,7 @@ uniquement sur demande explicite de l'utilisateur (story **3.W**).
 L'utilisateur n'est pas administrateur de son poste Windows (2026-11-13).
 
 - [x] **7.1** (RP) Mode proxy en espace utilisateur (sans TUN, sans admin) : pile TCP/IP `smoltcp` alimentée par le `PacketChannel` du tunnel ; proxy **SOCKS5** local (CONNECT TCP, résolution DNS via les DNS du tunnel) + **redirections de ports** `local:port → hôte:port` ; config TOML `[proxy]` ; aucune route/DNS système modifié. Fonctionne sous Windows non-admin et dans WSL.
-- [ ] **7.2** (TH) Tests e2e du mode proxy contre mock-gw (pair TCP simulé côté passerelle).
+- [x] **7.2** (TH) Tests e2e du mode proxy contre mock-gw (pair TCP simulé côté passerelle).
 
 ## Epic 5 — Qualité
 

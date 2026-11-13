@@ -145,7 +145,10 @@ impl<R: SessionRunner> Controller<R> {
             .unwrap_or_else(PoisonError::into_inner)
             .check(caller.sid(), Instant::now())
         {
-            tracing::warn!(sid = caller.sid(), "connexion refusée : trop d'échecs d'authentification");
+            tracing::warn!(
+                sid = caller.sid(),
+                "connexion refusée : trop d'échecs d'authentification"
+            );
             return Response::error(
                 ErrorCode::RateLimited,
                 format!(
@@ -235,7 +238,10 @@ impl<R: SessionRunner> Controller<R> {
 
     async fn disconnect(&self, caller: &Caller) -> Response {
         if !may_control(self.owner().as_deref(), caller) {
-            tracing::warn!(sid = caller.sid(), "disconnect refusé : session d'un autre utilisateur");
+            tracing::warn!(
+                sid = caller.sid(),
+                "disconnect refusé : session d'un autre utilisateur"
+            );
             return Response::error(
                 ErrorCode::Forbidden,
                 "la connexion appartient à un autre utilisateur",
@@ -278,7 +284,14 @@ fn record_auth_result(
     if outcome.error == Some(ErrorCode::AuthRejected) {
         throttle.record_failure(sid, Instant::now());
         tracing::warn!(sid, "échec d'authentification enregistré");
-    } else if sink.0.borrow().report(Instant::now()).steps.authenticated_ms.is_some() {
+    } else if sink
+        .0
+        .borrow()
+        .report(Instant::now())
+        .steps
+        .authenticated_ms
+        .is_some()
+    {
         throttle.record_success(sid);
     }
 }

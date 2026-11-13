@@ -5,6 +5,7 @@
 //! Compilé en cross (`x86_64-pc-windows-gnu`), jamais exécuté depuis WSL.
 #![allow(unsafe_code)]
 
+mod caller;
 mod client;
 mod dir;
 mod pipe;

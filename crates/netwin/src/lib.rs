@@ -24,7 +24,8 @@
 //!   `WinNetOptions::with_wintun_sha256`).
 //! - **`harden_dll_search()`** doit être appelée au tout début de `main`
 //!   (`SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)`).
-//! - Une seule instance : mutex nommé `Global\fortivpn-rs-netwin`, pris par
+//! - Une seule instance : verrou fichier exclusif (`share_mode(0)`)
+//!   `%ProgramData%\fortivpn-rs\instance.lock` (dossier admin-only, vérifié), pris par
 //!   `WinNetBackend::new` et tenu jusqu'à la libération du backend et de ses
 //!   guards.
 //! - Droits administrateur requis (création d'adaptateur, routes, NRPT).
@@ -48,6 +49,6 @@ pub use integrity::WINTUN_DLL_SHA256;
 pub use plan::{NRPT_RULE_PREFIX, WINTUN_DLL_NAME};
 #[cfg(windows)]
 pub use win::{
-    INSTANCE_MUTEX_NAME, WinCleanup, WinNetBackend, WinNetOptions, ensure_admin_only,
-    harden_dll_search,
+    INSTANCE_LOCK_FILE, WinCleanup, WinNetBackend, WinNetOptions, ensure_admin_only,
+    ensure_admin_only_chain, harden_dll_search,
 };

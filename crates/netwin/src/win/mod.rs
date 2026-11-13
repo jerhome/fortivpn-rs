@@ -17,7 +17,7 @@ use crate::engine::{self, RecoveryReport, Tracker};
 use crate::{integrity, plan, wfp as wfp_plan};
 use ffi::{RegistryStore, WinOps};
 use security::InstanceLock;
-pub use security::{INSTANCE_MUTEX_NAME, harden_dll_search};
+pub use security::{INSTANCE_LOCK_FILE, harden_dll_search};
 use wfp::Firewall;
 
 /// Options du backend Windows.
@@ -79,13 +79,15 @@ impl WinNetOptions {
 
 /// `NetBackend` Windows.
 ///
-/// Instance unique par machine : [`WinNetBackend::new`] crée le mutex
-/// [`INSTANCE_MUTEX_NAME`], tenu jusqu'à ce que le backend, ses clones et tous
+/// Instance unique par machine : [`WinNetBackend::new`] prend le verrou fichier
+/// [`INSTANCE_LOCK_FILE`], tenu jusqu'à ce que le backend, ses clones et tous
 /// les [`WinCleanup`] soient libérés.
 #[derive(Debug, Clone)]
 pub struct WinNetBackend {
     options: WinNetOptions,
     lock: Arc<InstanceLock>,
+    /// État du dernier `apply` (pour `suspend`, qui ne reçoit qu'un guard opaque).
+    last: Arc<Mutex<Option<Shared>>>,
 }
 
 impl WinNetBackend {
@@ -93,7 +95,28 @@ impl WinNetBackend {
     /// active (ou sans droits administrateur).
     pub fn new(options: WinNetOptions) -> Result<Self, NetError> {
         let lock = Arc::new(InstanceLock::acquire()?);
-        Ok(Self { options, lock })
+        Ok(Self {
+            options,
+            lock,
+            last: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    /// Suspension de la dernière configuration appliquée (cf.
+    /// `NetBackend::suspend`) : retire routes et DNS, **garde** un bloc WFP de tout
+    /// le trafic hors bouclage / passerelle / DHCP jusqu'au démontage du guard
+    /// (revue 5.3 passe 2, M2). Sans effet hors full-tunnel ou sans filtres WFP.
+    /// Exposée pour les enveloppes de backend qui ne peuvent pas passer le guard.
+    pub fn suspend_protection(&self) -> impl Future<Output = Result<(), NetError>> + Send {
+        let shared = lock_mutex(&self.last).clone();
+        async move {
+            let Some(shared) = shared else {
+                return Ok(());
+            };
+            tokio::task::spawn_blocking(move || suspend_blocking(&shared))
+                .await
+                .map_err(join_err("suspend"))?
+        }
     }
 
     /// Options effectives.
@@ -133,6 +156,14 @@ pub fn ensure_admin_only(path: &std::path::Path) -> Result<(), NetError> {
     security::check_admin_only(path)
 }
 
+/// Comme [`ensure_admin_only`], et contrôle aussi **tous les ancêtres** jusqu'à la
+/// racine du volume (aucun ne doit permettre de renommer / supprimer un enfant).
+/// À appeler à l'installation du service et à chacun de ses démarrages (revue 5.3
+/// passe 2, F1).
+pub fn ensure_admin_only_chain(path: &std::path::Path) -> Result<(), NetError> {
+    security::check_admin_only_chain(path)
+}
+
 fn join_err(op: &'static str) -> impl FnOnce(tokio::task::JoinError) -> NetError {
     move |e| NetError::Os {
         op,
@@ -169,6 +200,7 @@ fn apply_blocking(
     config: &TunnelConfig,
     lock: Arc<InstanceLock>,
     wfp_enabled: bool,
+    last: &Mutex<Option<Shared>>,
 ) -> Result<NetGuard<WinCleanup>, NetError> {
     let luid = tunnel_luid(tun)?;
     // Filtres d'abord : pas de fenêtre de fuite IPv6 / LLMNR. Si la suite
@@ -182,9 +214,15 @@ fn apply_blocking(
         wfp = firewall.is_some(),
         "configuration réseau appliquée"
     );
-    Ok(NetGuard::new(WinCleanup {
+    let shared = Shared {
         tracker: Arc::new(Mutex::new(tracker)),
         firewall: Arc::new(Mutex::new(firewall)),
+        hold: Arc::new(Mutex::new(None)),
+        hold_specs: Arc::new(wfp_plan::plan_hold_filters(config, wfp_enabled)),
+    };
+    *lock_mutex(last) = Some(shared.clone());
+    Ok(NetGuard::new(WinCleanup {
+        shared,
         _lock: lock,
     }))
 }
@@ -209,6 +247,18 @@ impl NetBackend for WinNetBackend {
         }
     }
 
+    fn keep_guard_during_reconnect(&self) -> bool {
+        // Seulement si les filtres WFP sont actifs (sinon rien à maintenir).
+        self.options.wfp_filters
+    }
+
+    fn suspend(
+        &self,
+        _guard: &mut NetGuard<WinCleanup>,
+    ) -> impl Future<Output = Result<(), NetError>> + Send {
+        self.suspend_protection()
+    }
+
     fn apply(
         &self,
         tun: &TunInfo,
@@ -218,60 +268,87 @@ impl NetBackend for WinNetBackend {
         let config = config.clone();
         let lock = Arc::clone(&self.lock);
         let wfp_enabled = self.options.wfp_filters;
+        let last = Arc::clone(&self.last);
         async move {
             // Rejet immédiat (IPv6, config invalide) sans appel système.
             plan::check_supported(&config)?;
             // Si cette future est abandonnée, la tâche bloquante va à son terme
             // et le guard produit est lâché : son Drop annule la configuration.
-            tokio::task::spawn_blocking(move || apply_blocking(&tun, &config, lock, wfp_enabled))
-                .await
-                .map_err(join_err("apply"))?
+            tokio::task::spawn_blocking(move || {
+                apply_blocking(&tun, &config, lock, wfp_enabled, &last)
+            })
+            .await
+            .map_err(join_err("apply"))?
         }
     }
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+fn lock_mutex<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Éléments d'une configuration appliquée, partagés entre le guard
+/// ([`WinCleanup`]) et le backend (pour `suspend`).
+#[derive(Debug, Clone)]
+struct Shared {
+    // Mutex : sérialise une annulation async en cours (thread bloquant) et
+    // l'annulation bloquante du Drop ; chacune ne retire que ce qui reste.
+    tracker: Arc<Mutex<Tracker<WinOps, RegistryStore>>>,
+    /// Session WFP dynamique du tunnel : sa fermeture retire les filtres.
+    firewall: Arc<Mutex<Option<Firewall>>>,
+    /// Session WFP de **protection pendant la reconnexion** (M2 passe 2) : bloc de
+    /// tout le trafic sauf bouclage / passerelle / DHCP, installée par `suspend`
+    /// et retirée seulement quand ce guard est démonté ou lâché (donc après le
+    /// `apply` suivant réussi, ou à la déconnexion finale).
+    hold: Arc<Mutex<Option<Firewall>>>,
+    hold_specs: Arc<Vec<wfp_plan::FilterSpec>>,
+}
+
+/// Suspension : retire routes / DNS du tunnel mort mais garde une protection WFP.
+/// Make-before-break : la protection est posée **avant** le retrait des filtres du
+/// tunnel, il n'y a donc aucune fenêtre de fuite.
+fn suspend_blocking(shared: &Shared) -> Result<(), NetError> {
+    if !shared.hold_specs.is_empty() && lock_mutex(&shared.hold).is_none() {
+        let hold = wfp::install_in(&shared.hold_specs, wfp_plan::HOLD_SUBLAYER_GUID)?;
+        *lock_mutex(&shared.hold) = hold;
+    }
+    lock_mutex(&shared.tracker).uninstall()?;
+    // Les filtres du tunnel (même sous-couche que le prochain `apply`) sont
+    // retirés ; la protection reste.
+    drop(lock_mutex(&shared.firewall).take());
+    Ok(())
 }
 
 /// Annulation de la configuration appliquée par [`WinNetBackend`] : retire
 /// exactement ce qui a été installé (journalisé), en ordre inverse.
 #[derive(Debug)]
 pub struct WinCleanup {
-    // Mutex : sérialise une annulation async en cours (thread bloquant) et
-    // l'annulation bloquante du Drop ; chacune ne retire que ce qui reste.
-    tracker: Arc<Mutex<Tracker<WinOps, RegistryStore>>>,
-    /// Session WFP dynamique : sa fermeture retire les filtres. Retirée
-    /// **après** les routes / DNS, seulement si leur annulation a réussi (sinon
-    /// elle protège encore ; le Drop de `WinCleanup` ou la mort du processus la
-    /// ferme).
-    firewall: Arc<Mutex<Option<Firewall>>>,
+    shared: Shared,
     /// Verrou d'instance tenu tant que la configuration peut être annulée.
     _lock: Arc<InstanceLock>,
 }
 
-fn uninstall_all(
-    tracker: &Mutex<Tracker<WinOps, RegistryStore>>,
-    firewall: &Mutex<Option<Firewall>>,
-) -> Result<(), NetError> {
-    lock(tracker).uninstall()?;
-    // Fermeture du handle de session dynamique = retrait des filtres.
-    drop(lock(firewall).take());
+/// Routes / DNS d'abord ; puis, seulement si leur annulation a réussi (sinon la
+/// protection reste : le Drop du guard ou la mort du processus la ferme), la
+/// fermeture des sessions WFP (filtres du tunnel et protection de reconnexion).
+fn uninstall_all(shared: &Shared) -> Result<(), NetError> {
+    lock_mutex(&shared.tracker).uninstall()?;
+    drop(lock_mutex(&shared.firewall).take());
+    drop(lock_mutex(&shared.hold).take());
     Ok(())
 }
 
 impl NetCleanup for WinCleanup {
     fn cleanup(&mut self) -> impl Future<Output = Result<(), NetError>> + Send {
-        let tracker = Arc::clone(&self.tracker);
-        let firewall = Arc::clone(&self.firewall);
+        let shared = self.shared.clone();
         async move {
-            tokio::task::spawn_blocking(move || uninstall_all(&tracker, &firewall))
+            tokio::task::spawn_blocking(move || uninstall_all(&shared))
                 .await
                 .map_err(join_err("cleanup"))?
         }
     }
 
     fn cleanup_blocking(&mut self) -> Result<(), NetError> {
-        uninstall_all(&self.tracker, &self.firewall)
+        uninstall_all(&self.shared)
     }
 }

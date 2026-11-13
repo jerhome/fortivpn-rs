@@ -27,11 +27,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use bytes::Bytes;
 use bytes::BytesMut;
 use proto::frame::FrameError;
 use proto::ppp::Protocol;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
 use crate::config::Ipv4Config;
@@ -347,6 +348,34 @@ pub(crate) struct Shared {
 pub struct PppPeer {
     cfg: Arc<PppPeerConfig>,
     shared: Arc<Shared>,
+    bridge: Option<IpBridge>,
+}
+
+/// Extrémités « passerelle » d'un pont IPv4 (voir [`PppPeer::with_ip_bridge`]).
+#[derive(Debug)]
+pub struct IpLink {
+    /// Paquets IPv4 reçus du client (une fois IPCP ouvert).
+    pub uplink: mpsc::UnboundedReceiver<Bytes>,
+    /// Paquets IPv4 à envoyer au client (encapsulés PPP/0x5050 par le pair).
+    pub downlink: mpsc::UnboundedSender<Bytes>,
+}
+
+/// Fabrique appelée à chaque session PPP servie avec les extrémités du pont ; elle
+/// lance (typiquement `tokio::spawn`) un pair IP personnalisé. Les tâches s'arrêtent
+/// d'elles-mêmes quand la session se termine (canaux fermés).
+#[derive(Clone)]
+pub struct IpBridge(Arc<dyn Fn(IpLink) + Send + Sync>);
+
+impl IpBridge {
+    pub fn new(f: impl Fn(IpLink) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+}
+
+impl std::fmt::Debug for IpBridge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IpBridge")
+    }
 }
 
 impl Default for PppPeer {
@@ -364,7 +393,16 @@ impl PppPeer {
                 status,
                 counters: AtomicCounters::default(),
             }),
+            bridge: None,
         }
+    }
+
+    /// Remplace l'écho ICMP par un pont : les paquets IPv4 du client sont transmis à
+    /// `bridge` (par session) qui peut répondre via [`IpLink::downlink`].
+    #[must_use]
+    pub fn with_ip_bridge(mut self, bridge: IpBridge) -> Self {
+        self.bridge = Some(bridge);
+        self
     }
 
     /// Pair nominal avec la panne `fault`.
@@ -412,6 +450,17 @@ impl PppPeer {
         }
 
         let mut m = Machine::new(&self.cfg, &self.shared, ipv4, conn_id, Instant::now());
+        let mut downlink = None;
+        if let Some(bridge) = &self.bridge {
+            let (up_tx, uplink) = mpsc::unbounded_channel();
+            let (down_tx, down_rx) = mpsc::unbounded_channel();
+            m.set_uplink(up_tx);
+            downlink = Some(down_rx);
+            (bridge.0)(IpLink {
+                uplink,
+                downlink: down_tx,
+            });
+        }
         let mut rx = BytesMut::with_capacity(4096);
         let (end, mode) = loop {
             if let Err(e) = flush(&mut stream, m.take_output()).await {
@@ -429,6 +478,7 @@ impl PppPeer {
                     Err(e) => break (PeerEnd::Io(e.kind()), CloseMode::Abort),
                 },
                 () = sleep_until_opt(deadline) => m.handle_timeout(Instant::now()),
+                Some(pkt) = recv_opt(&mut downlink) => m.send_ipv4(&pkt),
             }
         };
         match mode {
@@ -514,6 +564,13 @@ impl PppObserver {
                 return s.clone();
             }
         }
+    }
+}
+
+async fn recv_opt(rx: &mut Option<mpsc::UnboundedReceiver<Bytes>>) -> Option<Bytes> {
+    match rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
     }
 }
 

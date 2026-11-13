@@ -65,7 +65,11 @@ fn error_code(exit: Exit) -> Option<ErrorCode> {
 /// Code de sortie du client pour un code d'erreur du service.
 pub(crate) fn exit_of(code: ErrorCode) -> Exit {
     match code {
-        ErrorCode::BadRequest | ErrorCode::Timeout | ErrorCode::Internal => Exit::Internal,
+        ErrorCode::BadRequest
+        | ErrorCode::Timeout
+        | ErrorCode::Internal
+        | ErrorCode::Forbidden
+        | ErrorCode::RateLimited => Exit::Internal,
         ErrorCode::Busy | ErrorCode::AlreadyRunning => Exit::AlreadyRunning,
         ErrorCode::Config => Exit::Config,
         ErrorCode::AuthRejected => Exit::AuthRejected,
@@ -98,10 +102,12 @@ pub(crate) fn load_protected_config(
     // Le service crée toujours le TUN système : `[proxy]` serait ignoré en silence
     // (point 7.1), donc refusé explicitement.
     if config.proxy.is_some() {
-        return Err("la section [proxy] n'est pas supportée en mode service (le service \
+        return Err(
+            "la section [proxy] n'est pas supportée en mode service (le service \
                     établit un tunnel système) ; retirez-la du fichier de configuration du \
                     service, ou utilisez `fortivpn connect` sans le service"
-            .into());
+                .into(),
+        );
     }
     Ok(config)
 }
@@ -385,14 +391,30 @@ mod win {
         netwin::ensure_admin_only(path).map_err(|e| e.to_string())
     }
 
-    fn install() -> Result<(), String> {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        // Le service tourne en SYSTEM : l'exécutable et son dossier (où est aussi
-        // wintun.dll) ne doivent pas être modifiables par un utilisateur standard.
+    fn admin_only_chain(path: &std::path::Path) -> Result<(), String> {
+        netwin::ensure_admin_only_chain(path).map_err(|e| e.to_string())
+    }
+
+    /// Le service tourne en SYSTEM : l'exécutable, son dossier (où est aussi
+    /// wintun.dll) et **tous les ancêtres** de ce dossier jusqu'à la racine du
+    /// volume ne doivent pas être modifiables par un utilisateur standard (F1).
+    /// Appelé à l'installation et à chaque démarrage du service.
+    fn verify_install(exe: &std::path::Path) -> Result<(), String> {
         if let Some(dir) = exe.parent() {
             admin_only(dir)?;
+            admin_only_chain(dir)?;
         }
-        admin_only(&exe)?;
+        admin_only(exe)?;
+        let dll = netwin::WinNetOptions::default().wintun_dll;
+        if dll.exists() {
+            admin_only(&dll)?;
+        }
+        Ok(())
+    }
+
+    fn install() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        verify_install(&exe)?;
         let data = data_dir()?;
         fortivpn_service::create_admin_only_dir(&data).map_err(|e| e.to_string())?;
         admin_only(&data)?;
@@ -426,6 +448,13 @@ mod win {
 
     fn run_service() -> Result<(), String> {
         init_logging();
+        // Intégrité de l'installation rejouée à chaque démarrage (F1) : refus sinon.
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        verify_install(&exe).map_err(|e| format!("installation non sûre, service refusé : {e}"))?;
+        if let Ok(dir) = data_dir() {
+            admin_only(&dir)?;
+            admin_only_chain(&dir)?;
+        }
         // Résidus d'un crash précédent (routes, NRPT, journal d'état) : purgés
         // avant d'accepter la moindre connexion ; le backend (et son verrou) est
         // libéré aussitôt.
@@ -618,7 +647,10 @@ mod tests {
         )
         .unwrap();
         let err = load_protected_config(&path, &|_| Ok(())).unwrap_err();
-        assert!(err.contains("[proxy]") && err.contains("mode service"), "{err}");
+        assert!(
+            err.contains("[proxy]") && err.contains("mode service"),
+            "{err}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -632,9 +664,12 @@ mod tests {
             Duration::from_secs(5),
         );
         let response = controller
-            .handle(Request::Connect {
-                password: zeroize::Zeroizing::new("pw".into()),
-            })
+            .handle(
+                Request::Connect {
+                    password: zeroize::Zeroizing::new("pw".into()),
+                },
+                &fortivpn_service::Caller::new("S-1-5-21-1-2-3-1001", false),
+            )
             .await;
         assert!(
             matches!(&response, Response::Error { code: ErrorCode::Config, message } if message == "fichier non protégé"),

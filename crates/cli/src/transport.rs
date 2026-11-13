@@ -10,7 +10,10 @@ pub(crate) fn ssl_vpn_options(config: &Config) -> SslVpnOptions {
     if let Some(realm) = &config.realm {
         options.realm.clone_from(realm);
     }
-    options.tls.pinned.extend(config.trusted_cert.iter().copied());
+    options
+        .tls
+        .pinned
+        .extend(config.trusted_cert.iter().copied());
     options
 }
 

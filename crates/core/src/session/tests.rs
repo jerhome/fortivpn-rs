@@ -89,7 +89,7 @@ async fn wait_up(events: &mut SessionEvents) -> TunnelConfig {
     }
 }
 
-async fn finish<T, B>(task: Running<T, B>) -> DisconnectReason {
+async fn finish<T: Transport, B: NetBackend>(task: Running<T, B>) -> DisconnectReason {
     tokio::time::timeout(STEP, task).await.unwrap().unwrap().0
 }
 

@@ -126,9 +126,7 @@ impl AuthThrottle {
         entry.last = now;
         entry.blocked_until = match entry.failures {
             n if n >= BLOCK_FAILURES => Some(now + BLOCK_DURATION),
-            n if n >= FREE_FAILURES => {
-                Some(now + FIRST_DELAY * 2u32.pow(n - FREE_FAILURES))
-            }
+            n if n >= FREE_FAILURES => Some(now + FIRST_DELAY * 2u32.pow(n - FREE_FAILURES)),
             _ => None,
         };
     }
@@ -236,7 +234,10 @@ mod tests {
         let mut th = AuthThrottle::new();
         let now = t0();
         for i in 0..(MAX_TRACKED * 2) {
-            th.record_failure(&format!("S-1-5-21-{i}"), now + Duration::from_millis(i as u64));
+            th.record_failure(
+                &format!("S-1-5-21-{i}"),
+                now + Duration::from_millis(i as u64),
+            );
         }
         assert!(th.entries.len() <= MAX_TRACKED);
     }

@@ -117,6 +117,26 @@ impl NetBackend for AnyBackend {
             Self::Proxy(b) => Ok(b.apply(tun, config).await?.map(AnyCleanup::Proxy)),
         }
     }
+
+    fn keep_guard_during_reconnect(&self) -> bool {
+        match self {
+            Self::System(b) => b.keep_guard_during_reconnect(),
+            Self::Proxy(b) => b.keep_guard_during_reconnect(),
+        }
+    }
+
+    #[cfg_attr(not(windows), allow(clippy::unused_async_trait_impl))]
+    async fn suspend(&self, _guard: &mut NetGuard<AnyCleanup>) -> Result<(), NetError> {
+        // Le backend système suit lui-même sa dernière configuration appliquée ;
+        // le mode proxy n'a rien à maintenir (comportement par défaut).
+        match self {
+            #[cfg(windows)]
+            Self::System(b) => b.suspend_protection().await,
+            #[cfg(not(windows))]
+            Self::System(_) => Ok(()),
+            Self::Proxy(_) => Ok(()),
+        }
+    }
 }
 
 impl NetCleanup for AnyCleanup {

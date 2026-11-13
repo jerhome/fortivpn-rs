@@ -57,8 +57,8 @@ pub use crate::log::{
 };
 pub use crate::ppp::{
     DEFAULT_GATEWAY_MAGIC, DEFAULT_GATEWAY_PPP_ADDR, DEFAULT_REPLY_IP_ID, FaultTrigger,
-    GatewayIpcpRequest, IpcpUp, MalformedFrame, PeerEnd, PeerPhase, PppCounters, PppFault,
-    PppObserver, PppPeer, PppPeerConfig, PppStatus,
+    GatewayIpcpRequest, IpBridge, IpLink, IpcpUp, MalformedFrame, PeerEnd, PeerPhase, PppCounters,
+    PppFault, PppObserver, PppPeer, PppPeerConfig, PppStatus,
 };
 pub use crate::tls::GatewayCert;
 pub use crate::tunnel::{CloseTunnel, TunnelContext, TunnelFuture, TunnelHandler, TunnelStream};

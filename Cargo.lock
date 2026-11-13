@@ -729,6 +729,7 @@ dependencies = [
  "bytes",
  "fortivpn-core",
  "ipnet",
+ "mock-gw",
  "smoltcp",
  "thiserror 2.0.21",
  "tokio",

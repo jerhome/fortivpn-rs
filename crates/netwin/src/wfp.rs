@@ -7,10 +7,17 @@
 //! système quand le handle de session est fermé ou que le processus meurt
 //! (kill-switch sans résidu, aucun journal nécessaire). Revue 5.3, E2 / F4.
 
+use std::net::IpAddr;
+
 use fortivpn_core::{RoutingMode, TunnelConfig};
 
 /// GUID constant de notre sous-couche WFP (`"fortivpn-rs-wfp"` en ASCII, 16 octets).
 pub(crate) const SUBLAYER_GUID: u128 = 0x666f_7274_6976_706e_2d72_732d_7766_7000;
+
+/// GUID de la sous-couche de **protection pendant la reconnexion** (`"fortivpn-rs-hold"`).
+/// Distincte de [`SUBLAYER_GUID`] : la protection est installée (nouvelle session)
+/// avant le retrait des filtres du tunnel, sans fenêtre de fuite ni conflit.
+pub(crate) const HOLD_SUBLAYER_GUID: u128 = 0x666f_7274_6976_706e_2d72_732d_686f_6c64;
 
 /// Poids de la sous-couche (élevé : évalué avant la plupart des autres).
 pub(crate) const SUBLAYER_WEIGHT: u16 = 0xFFF0;
@@ -56,6 +63,8 @@ pub(crate) enum Condition {
     RemotePort(u16),
     /// Port local (couche recv/accept).
     LocalPort(u16),
+    /// Adresse distante exacte (couche connect).
+    RemoteAddr(IpAddr),
 }
 
 /// Description d'un filtre.
@@ -76,6 +85,75 @@ fn permit_loopback(layer: Layer) -> FilterSpec {
         weight: WEIGHT_PERMIT,
         conditions: vec![Condition::Loopback],
     }
+}
+
+/// Ports `DHCPv4` : serveur (connect) et client (recv/accept).
+const DHCP_SERVER_PORT: u16 = 67;
+const DHCP_CLIENT_PORT: u16 = 68;
+
+/// Filtres de **protection pendant la reconnexion** (revue 5.3 passe 2, M2) :
+/// tant que la session est en `Reconnecting`, tout est bloqué (IPv4 et IPv6,
+/// connect et recv/accept) sauf le bouclage, la passerelle VPN (pour se
+/// reconnecter) et `DHCPv4` (changement de réseau). Le nouveau tunnel est autorisé
+/// en remplaçant cette protection par les filtres de [`plan_filters`] à
+/// l'`apply` suivant. Vide hors full-tunnel ou si `enabled` est faux.
+pub(crate) fn plan_hold_filters(config: &TunnelConfig, enabled: bool) -> Vec<FilterSpec> {
+    if !enabled || !matches!(config.routing, RoutingMode::Full { .. }) {
+        return Vec::new();
+    }
+    let mut out = vec![
+        permit_loopback(Layer::ConnectV4),
+        permit_loopback(Layer::RecvAcceptV4),
+        permit_loopback(Layer::ConnectV6),
+        permit_loopback(Layer::RecvAcceptV6),
+    ];
+    let gateway_layer = if config.gateway.is_ipv4() {
+        Layer::ConnectV4
+    } else {
+        Layer::ConnectV6
+    };
+    out.push(FilterSpec {
+        name: "fortivpn-rs hold permit gateway".into(),
+        layer: gateway_layer,
+        verdict: Verdict::Permit,
+        weight: WEIGHT_PERMIT,
+        conditions: vec![Condition::RemoteAddr(config.gateway)],
+    });
+    out.push(FilterSpec {
+        name: "fortivpn-rs hold permit DHCPv4 out".into(),
+        layer: Layer::ConnectV4,
+        verdict: Verdict::Permit,
+        weight: WEIGHT_PERMIT,
+        conditions: vec![
+            Condition::Protocol(PROTO_UDP),
+            Condition::RemotePort(DHCP_SERVER_PORT),
+        ],
+    });
+    out.push(FilterSpec {
+        name: "fortivpn-rs hold permit DHCPv4 in".into(),
+        layer: Layer::RecvAcceptV4,
+        verdict: Verdict::Permit,
+        weight: WEIGHT_PERMIT,
+        conditions: vec![
+            Condition::Protocol(PROTO_UDP),
+            Condition::LocalPort(DHCP_CLIENT_PORT),
+        ],
+    });
+    for layer in [
+        Layer::ConnectV4,
+        Layer::RecvAcceptV4,
+        Layer::ConnectV6,
+        Layer::RecvAcceptV6,
+    ] {
+        out.push(FilterSpec {
+            name: format!("fortivpn-rs hold block all {layer:?}"),
+            layer,
+            verdict: Verdict::Block,
+            weight: WEIGHT_BLOCK,
+            conditions: Vec::new(),
+        });
+    }
+    out
 }
 
 /// Filtres à installer. Vide hors full-tunnel ou si `enabled` est faux.
@@ -198,6 +276,63 @@ mod tests {
                     .all(|b| b.weight < p.weight)
             );
         }
+    }
+
+    #[test]
+    fn hold_nothing_in_split_or_when_disabled() {
+        assert!(plan_hold_filters(&split(), true).is_empty());
+        assert!(plan_hold_filters(&full(), false).is_empty());
+    }
+
+    #[test]
+    fn hold_blocks_everything_but_loopback_gateway_and_dhcp() {
+        let c = full();
+        let f = plan_hold_filters(&c, true);
+        let blocks: Vec<_> = f.iter().filter(|x| x.verdict == Verdict::Block).collect();
+        // Un bloc sans condition par couche : rien ne passe hors permits.
+        assert_eq!(blocks.len(), 4);
+        assert!(
+            blocks
+                .iter()
+                .all(|b| b.conditions.is_empty() && b.weight == WEIGHT_BLOCK)
+        );
+        let permits: Vec<_> = f.iter().filter(|x| x.verdict == Verdict::Permit).collect();
+        assert!(
+            permits
+                .iter()
+                .all(|p| p.weight == WEIGHT_PERMIT && p.weight > WEIGHT_BLOCK)
+        );
+        // Passerelle autorisée, et elle seule comme adresse.
+        let gw: Vec<_> = permits
+            .iter()
+            .filter(|p| p.conditions.contains(&Condition::RemoteAddr(c.gateway)))
+            .collect();
+        assert_eq!(gw.len(), 1);
+        assert_eq!(gw[0].layer, Layer::ConnectV4);
+        // Bouclage sur les 4 couches ; DHCP en IPv4 seulement.
+        assert_eq!(
+            permits
+                .iter()
+                .filter(|p| p.conditions == [Condition::Loopback])
+                .count(),
+            4
+        );
+        assert!(
+            permits.iter().any(|p| p.layer == Layer::RecvAcceptV4
+                && p.conditions.contains(&Condition::LocalPort(68)))
+        );
+        assert_eq!(permits.len(), 4 + 1 + 2);
+    }
+
+    #[test]
+    fn hold_gateway_permit_follows_address_family() {
+        let mut c = full();
+        c.gateway = "2001:db8::1".parse().unwrap();
+        let f = plan_hold_filters(&c, true);
+        assert!(
+            f.iter().any(|x| x.layer == Layer::ConnectV6
+                && x.conditions == [Condition::RemoteAddr(c.gateway)])
+        );
     }
 
     #[test]

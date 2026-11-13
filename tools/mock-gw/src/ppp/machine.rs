@@ -109,6 +109,7 @@ pub(crate) struct Machine<'a> {
     client_dns: Vec<Ipv4Addr>,
     ipv6cp_offered: bool,
 
+    uplink: Option<tokio::sync::mpsc::UnboundedSender<Bytes>>,
     next_ip_id: u16,
     echo_id: u8,
     echo_deadline: Option<Instant>,
@@ -155,6 +156,7 @@ impl<'a> Machine<'a> {
             client_ip: None,
             client_dns: Vec::new(),
             ipv6cp_offered: false,
+            uplink: None,
             next_ip_id: cfg.reply_ip_id,
             echo_id: 0,
             echo_deadline: None,
@@ -658,6 +660,10 @@ impl<'a> Machine<'a> {
             return;
         }
         inc(&c.ipv4_rx);
+        if let Some(up) = &self.uplink {
+            let _ = up.send(Bytes::copy_from_slice(ip));
+            return;
+        }
         let for_target = match (self.cfg.icmp_target, ipv4_addrs(ip)) {
             (None, Some(_)) => true,
             (Some(t), Some((_, dst))) => dst == t,
@@ -680,6 +686,18 @@ impl<'a> Machine<'a> {
                 tracing::debug!(conn_id = self.conn_id, ?why, "mock-gw ppp: IPv4 ignoré");
                 inc(&c.ipv4_dropped);
             }
+        }
+    }
+
+    pub(crate) fn set_uplink(&mut self, up: tokio::sync::mpsc::UnboundedSender<Bytes>) {
+        self.uplink = Some(up);
+    }
+
+    /// Émet un paquet IPv4 vers le client (pont IP) ; ignoré tant qu'IPCP n'est pas ouvert.
+    pub(crate) fn send_ipv4(&mut self, ip: &[u8]) {
+        if self.ipcp.opened() && encode_ppp_frame(Protocol::IPV4, ip, &mut self.out).is_ok() {
+            inc(&self.shared.counters.frames_tx);
+            inc(&self.shared.counters.ipv4_tx);
         }
     }
 

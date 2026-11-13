@@ -1,20 +1,20 @@
-//! Durcissement du processus (revue 5.3) : instance unique (M1), chemin de
-//! recherche DLL et vérification d'ACL de l'installation (M4).
+//! Durcissement du processus (revue 5.3) : instance unique (verrou fichier
+//! exclusif), chemin de recherche DLL et vérification d'ACL de l'installation.
 //!
 //! Toute mémoire allouée par l'OS (`LocalAlloc`) est possédée par
-//! [`LocalBox`] (libérée au `Drop`) ; le handle du mutex par
-//! [`InstanceLock`] (fermé au `Drop`).
+//! [`LocalBox`] (libérée au `Drop`) ; le fichier verrou est un `std::fs::File`
+//! (fermé au `Drop`).
 #![allow(unsafe_code)]
 
 use std::ffi::c_void;
+use std::fs::{File, OpenOptions};
 use std::io;
-use std::path::Path;
+use std::os::windows::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 use std::ptr;
 
 use fortivpn_core::NetError;
-use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, HANDLE, LocalFree, NO_ERROR, SetLastError,
-};
+use windows_sys::Win32::Foundation::{LocalFree, NO_ERROR};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
     GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
@@ -23,10 +23,10 @@ use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, GetAce, INHERIT_ONLY_ACE,
     OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
 };
+use windows_sys::Win32::Storage::FileSystem::CreateDirectoryW;
 use windows_sys::Win32::System::LibraryLoader::{
     LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories,
 };
-use windows_sys::Win32::System::Threading::CreateMutexW;
 
 use crate::integrity::{self, Ace};
 use crate::plan;
@@ -81,74 +81,102 @@ fn security_descriptor(sddl: &str) -> Result<LocalBox, NetError> {
     Ok(LocalBox(sd))
 }
 
-/// Nom du mutex d'instance unique (espace de noms global : toutes sessions).
-pub const INSTANCE_MUTEX_NAME: &str = r"Global\fortivpn-rs-netwin";
+/// Sous-dossier de `%ProgramData%` (admin-only) contenant le verrou d'instance.
+const LOCK_DIR_NAME: &str = "fortivpn-rs";
+/// Nom du fichier verrou d'instance.
+pub const INSTANCE_LOCK_FILE: &str = "instance.lock";
 
-/// DACL du mutex : SYSTEM et Administrateurs seulement (DACL protégée).
-const INSTANCE_MUTEX_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+/// DACL d'un dossier créé par nous : SYSTEM et Administrateurs, héritée par les
+/// fichiers et sous-dossiers, DACL protégée.
+const ADMIN_DIR_SDDL: &str = "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)";
 
-/// Verrou d'instance unique (revue 5.3, M1) : mutex nommé
-/// [`INSTANCE_MUTEX_NAME`] **créé** par ce processus. L'existence de l'objet
-/// fait office de verrou (pas de `WaitForSingleObject`, donc pas d'affinité
-/// de thread ni d'abandon) ; il disparaît quand le dernier handle est fermé,
-/// y compris à la mort du processus. Créer un objet `Global\` exige
-/// `SeCreateGlobalPrivilege` (administrateurs, services) : un utilisateur
-/// standard ne peut pas le squatter.
-#[derive(Debug)]
-pub(crate) struct InstanceLock(HANDLE);
+/// Droits d'accès du fichier verrou : `GENERIC_WRITE | DELETE` (ce dernier est
+/// requis par `FILE_FLAG_DELETE_ON_CLOSE`).
+const LOCK_ACCESS: u32 = 0x4000_0000 | 0x0001_0000;
+const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x0400_0000;
+const ERROR_SHARING_VIOLATION: i32 = 32;
 
-// SAFETY: un handle de mutex est une référence d'objet noyau valable pour tout
-// le processus ; il n'est utilisé que pour `CloseHandle`, une fois, au Drop.
-unsafe impl Send for InstanceLock {}
-// SAFETY: aucune méthode n'utilise le handle via `&self`.
-unsafe impl Sync for InstanceLock {}
-
-impl InstanceLock {
-    /// Crée le mutex ; erreur s'il existe déjà (autre instance) ou si l'accès
-    /// est refusé.
-    pub(crate) fn acquire() -> Result<Self, NetError> {
-        let sd = security_descriptor(INSTANCE_MUTEX_SDDL)?;
-        let sa = SECURITY_ATTRIBUTES {
-            nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(u32::MAX),
-            lpSecurityDescriptor: sd.0,
-            bInheritHandle: 0,
-        };
-        let name = plan::to_wide(INSTANCE_MUTEX_NAME);
-        // SAFETY: remise à zéro de l'erreur du thread, sans précondition.
-        unsafe { SetLastError(NO_ERROR) };
-        // SAFETY: `sa` (et le descripteur `sd` qu'il pointe) et `name`
-        // (terminé par NUL) vivent pendant l'appel ; non propriétaire initial.
-        let handle = unsafe { CreateMutexW(&raw const sa, 0, name.as_ptr()) };
-        let err = io::Error::last_os_error();
-        drop(sd);
-        if handle.is_null() {
-            return Err(NetError::Os {
-                op: "instance_lock",
-                reason: format!(
-                    "verrou d'instance {INSTANCE_MUTEX_NAME} indisponible ({err}) : \
-                     une autre instance tourne-t-elle ? (droits administrateur requis)"
-                ),
-            });
-        }
-        let lock = Self(handle);
-        if err.raw_os_error() == i32::try_from(ERROR_ALREADY_EXISTS).ok() {
-            drop(lock);
-            return Err(NetError::Os {
-                op: "instance_lock",
-                reason: "une autre instance de fortivpn-rs est déjà active".into(),
-            });
-        }
-        Ok(lock)
-    }
+/// Dossier du verrou : `%ProgramData%\fortivpn-rs`.
+fn lock_dir() -> Result<PathBuf, NetError> {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .map(|p| p.join(LOCK_DIR_NAME))
+        .ok_or_else(|| NetError::Os {
+            op: "instance_lock",
+            reason: "variable ProgramData absente ou invalide".into(),
+        })
 }
 
-impl Drop for InstanceLock {
-    fn drop(&mut self) {
-        // SAFETY: handle valide retourné par CreateMutexW, possédé
-        // exclusivement par ce wrapper et fermé une seule fois.
-        if unsafe { CloseHandle(self.0) } == 0 {
-            tracing::warn!(error = %io::Error::last_os_error(), "CloseHandle (verrou d'instance)");
+/// Crée `path` (parent existant) avec la DACL [`ADMIN_DIR_SDDL`].
+fn create_admin_dir(path: &Path) -> Result<(), NetError> {
+    let sd = security_descriptor(ADMIN_DIR_SDDL)?;
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(u32::MAX),
+        lpSecurityDescriptor: sd.0,
+        bInheritHandle: 0,
+    };
+    let wpath = plan::to_wide(&path.to_string_lossy());
+    // SAFETY: `wpath` terminé par NUL ; `sa` et le descripteur `sd` qu'il pointe
+    // vivent pendant l'appel (CreateDirectoryW en copie le contenu).
+    let ok = unsafe { CreateDirectoryW(wpath.as_ptr(), &raw const sa) };
+    if ok == 0 {
+        return Err(last_os_err("instance_lock_dir"));
+    }
+    Ok(())
+}
+
+/// Verrou d'instance unique (revue 5.3, M4 passe 2) : fichier
+/// `%ProgramData%\fortivpn-rs\instance.lock`, ouvert en **partage exclusif**
+/// (`share_mode(0)`) avec `FILE_FLAG_DELETE_ON_CLOSE`. Le dossier est vérifié
+/// admin-only ([`check_admin_only`]) : un utilisateur standard ne peut ni créer,
+/// ni ouvrir, ni renommer le fichier (le mutex `Global\` de la passe 1 était
+/// squattable). Le verrou disparaît avec le dernier handle, y compris à la mort
+/// du processus (un fichier résiduel est simplement rouvert).
+#[derive(Debug)]
+pub(crate) struct InstanceLock {
+    _file: File,
+}
+
+impl InstanceLock {
+    /// Prend le verrou ; erreur s'il est déjà tenu (autre instance), si le dossier
+    /// n'est pas réservé aux administrateurs, ou sans droits suffisants.
+    pub(crate) fn acquire() -> Result<Self, NetError> {
+        Self::acquire_in(&lock_dir()?)
+    }
+
+    fn acquire_in(dir: &Path) -> Result<Self, NetError> {
+        if !dir.exists() {
+            create_admin_dir(dir)?;
         }
+        check_admin_only(dir)?;
+        let path = dir.join(INSTANCE_LOCK_FILE);
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .access_mode(LOCK_ACCESS)
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+            .open(&path)
+            .map_err(|e| {
+                if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) {
+                    NetError::Os {
+                        op: "instance_lock",
+                        reason: "une autre instance de fortivpn-rs est déjà active".into(),
+                    }
+                } else {
+                    NetError::Os {
+                        op: "instance_lock",
+                        reason: format!(
+                            "verrou d'instance {} indisponible ({e}) : droits administrateur requis",
+                            path.display()
+                        ),
+                    }
+                }
+            })?;
+        // Pas de contrôle d'ACL du fichier : il est ouvert sans partage, et le
+        // dossier (vérifié) est seul à pouvoir y déposer ou y renommer un fichier.
+        Ok(Self { _file: file })
     }
 }
 
@@ -238,6 +266,31 @@ fn read_aces(acl: *const ACL) -> Result<Vec<Ace>, NetError> {
 /// (revue 5.3, M4). Les liens sont suivis : c'est la cible effective qui est
 /// vérifiée.
 pub(crate) fn check_admin_only(path: &Path) -> Result<(), NetError> {
+    check_path(path, integrity::check_admin_only)
+}
+
+/// Vérifie `path` (comme [`check_admin_only`]) **et toute la chaîne de ses
+/// ancêtres** jusqu'à la racine du volume (revue 5.3 passe 2, F1) : un ancêtre
+/// modifiable (renommage / suppression d'un enfant) permettrait de remplacer
+/// le dossier vérifié. Le chemin est d'abord canonicalisé (liens et jonctions
+/// résolus : ce sont les ancêtres réels qui sont contrôlés).
+pub(crate) fn check_admin_only_chain(path: &Path) -> Result<(), NetError> {
+    let real = std::fs::canonicalize(path).map_err(|e| NetError::Io {
+        op: "install_acl",
+        source: e,
+    })?;
+    check_path(&real, integrity::check_admin_only)?;
+    for ancestor in integrity::ancestors_of(&real) {
+        check_path(&ancestor, integrity::check_ancestor)?;
+    }
+    Ok(())
+}
+
+/// Lit propriétaire et DACL de `path` et applique `decide`.
+fn check_path(
+    path: &Path,
+    decide: fn(&str, Option<&[Ace]>) -> Result<(), String>,
+) -> Result<(), NetError> {
     let wpath = plan::to_wide(&path.to_string_lossy());
     let mut owner: PSID = ptr::null_mut();
     let mut dacl: *mut ACL = ptr::null_mut();
@@ -274,7 +327,7 @@ pub(crate) fn check_admin_only(path: &Path) -> Result<(), NetError> {
         Some(read_aces(dacl)?)
     };
     drop(sd);
-    integrity::check_admin_only(&owner, aces.as_deref()).map_err(|reason| NetError::Os {
+    decide(&owner, aces.as_deref()).map_err(|reason| NetError::Os {
         op: "install_acl",
         reason: format!(
             "{} : {reason} (installer fortivpn-rs et wintun.dll dans un dossier réservé \

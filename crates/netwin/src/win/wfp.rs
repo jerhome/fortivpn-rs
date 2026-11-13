@@ -7,15 +7,17 @@
 #![allow(unsafe_code)]
 
 use std::io;
+use std::net::IpAddr;
 use std::ptr;
 
 use fortivpn_core::NetError;
 use windows_sys::Win32::Foundation::{HANDLE, NO_ERROR};
 use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::{
-    FWP_ACTION_BLOCK, FWP_ACTION_PERMIT, FWP_CONDITION_FLAG_IS_LOOPBACK, FWP_CONDITION_VALUE0,
-    FWP_CONDITION_VALUE0_0, FWP_MATCH_EQUAL, FWP_MATCH_FLAGS_ALL_SET, FWP_MATCH_NOT_EQUAL,
-    FWP_UINT8, FWP_UINT16, FWP_UINT32, FWP_UINT64, FWP_VALUE0, FWP_VALUE0_0, FWPM_CONDITION_FLAGS,
-    FWPM_CONDITION_IP_LOCAL_INTERFACE, FWPM_CONDITION_IP_LOCAL_PORT, FWPM_CONDITION_IP_PROTOCOL,
+    FWP_ACTION_BLOCK, FWP_ACTION_PERMIT, FWP_BYTE_ARRAY16, FWP_BYTE_ARRAY16_TYPE,
+    FWP_CONDITION_FLAG_IS_LOOPBACK, FWP_CONDITION_VALUE0, FWP_CONDITION_VALUE0_0, FWP_MATCH_EQUAL,
+    FWP_MATCH_FLAGS_ALL_SET, FWP_MATCH_NOT_EQUAL, FWP_UINT8, FWP_UINT16, FWP_UINT32, FWP_UINT64,
+    FWP_VALUE0, FWP_VALUE0_0, FWPM_CONDITION_FLAGS, FWPM_CONDITION_IP_LOCAL_INTERFACE,
+    FWPM_CONDITION_IP_LOCAL_PORT, FWPM_CONDITION_IP_PROTOCOL, FWPM_CONDITION_IP_REMOTE_ADDRESS,
     FWPM_CONDITION_IP_REMOTE_PORT, FWPM_DISPLAY_DATA0, FWPM_FILTER_CONDITION0,
     FWPM_FILTER_FLAG_NONE, FWPM_FILTER0, FWPM_LAYER_ALE_AUTH_CONNECT_V4,
     FWPM_LAYER_ALE_AUTH_CONNECT_V6, FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,
@@ -121,19 +123,25 @@ fn zero_condition() -> FWPM_FILTER_CONDITION0 {
     unsafe { std::mem::zeroed() }
 }
 
-/// Condition WFP ; `luid` est la cible du pointeur `uint64` (doit vivre
-/// jusqu'à l'ajout du filtre).
-fn to_condition(cond: Condition, luid: &mut u64) -> FWPM_FILTER_CONDITION0 {
+/// Valeurs référencées par pointeur par une condition (doivent vivre jusqu'à
+/// l'ajout du filtre).
+#[derive(Default)]
+struct Slot {
+    luid: u64,
+    v6: FWP_BYTE_ARRAY16,
+}
+
+fn to_condition(cond: Condition, slot: &mut Slot) -> FWPM_FILTER_CONDITION0 {
     let mut c = zero_condition();
     match cond {
         Condition::LocalInterfaceNot(value) => {
-            *luid = value;
+            slot.luid = value;
             c.fieldKey = FWPM_CONDITION_IP_LOCAL_INTERFACE;
             c.matchType = FWP_MATCH_NOT_EQUAL;
             c.conditionValue = FWP_CONDITION_VALUE0 {
                 r#type: FWP_UINT64,
                 Anonymous: FWP_CONDITION_VALUE0_0 {
-                    uint64: ptr::from_mut(luid),
+                    uint64: ptr::from_mut(&mut slot.luid),
                 },
             };
         }
@@ -144,6 +152,28 @@ fn to_condition(cond: Condition, luid: &mut u64) -> FWPM_FILTER_CONDITION0 {
                 r#type: FWP_UINT32,
                 Anonymous: FWP_CONDITION_VALUE0_0 {
                     uint32: FWP_CONDITION_FLAG_IS_LOOPBACK,
+                },
+            };
+        }
+        Condition::RemoteAddr(IpAddr::V4(ip)) => {
+            c.fieldKey = FWPM_CONDITION_IP_REMOTE_ADDRESS;
+            c.matchType = FWP_MATCH_EQUAL;
+            // IPv4 : entier 32 bits en ordre d'octets de l'hôte (valeur numérique).
+            c.conditionValue = FWP_CONDITION_VALUE0 {
+                r#type: FWP_UINT32,
+                Anonymous: FWP_CONDITION_VALUE0_0 {
+                    uint32: u32::from(ip),
+                },
+            };
+        }
+        Condition::RemoteAddr(IpAddr::V6(ip)) => {
+            slot.v6.byteArray16 = ip.octets();
+            c.fieldKey = FWPM_CONDITION_IP_REMOTE_ADDRESS;
+            c.matchType = FWP_MATCH_EQUAL;
+            c.conditionValue = FWP_CONDITION_VALUE0 {
+                r#type: FWP_BYTE_ARRAY16_TYPE,
+                Anonymous: FWP_CONDITION_VALUE0_0 {
+                    byteArray16: ptr::from_mut(&mut slot.v6),
                 },
             };
         }
@@ -171,12 +201,13 @@ fn to_condition(cond: Condition, luid: &mut u64) -> FWPM_FILTER_CONDITION0 {
     c
 }
 
-fn add_filter(engine: HANDLE, spec: &FilterSpec) -> Result<(), NetError> {
-    // Un seul LUID par filtre au plus (une seule condition d'interface).
-    let mut luids = [0u64; 4];
+fn add_filter(engine: HANDLE, spec: &FilterSpec, sublayer: u128) -> Result<(), NetError> {
+    // Une case par condition : les pointeurs restent valables jusqu'à l'appel
+    // (`slots` n'est ni déplacé ni réalloué après la boucle).
+    let mut slots: Vec<Slot> = spec.conditions.iter().map(|_| Slot::default()).collect();
     let mut conds: Vec<FWPM_FILTER_CONDITION0> = Vec::with_capacity(spec.conditions.len());
-    for (cond, luid) in spec.conditions.iter().zip(luids.iter_mut()) {
-        conds.push(to_condition(*cond, luid));
+    for (cond, slot) in spec.conditions.iter().zip(slots.iter_mut()) {
+        conds.push(to_condition(*cond, slot));
     }
     let mut name = to_wide(&spec.name);
     let mut filter = zero_filter();
@@ -186,7 +217,7 @@ fn add_filter(engine: HANDLE, spec: &FilterSpec) -> Result<(), NetError> {
     };
     filter.flags = FWPM_FILTER_FLAG_NONE;
     filter.layerKey = layer_guid(spec.layer);
-    filter.subLayerKey = GUID::from_u128(wfp::SUBLAYER_GUID);
+    filter.subLayerKey = GUID::from_u128(sublayer);
     filter.weight = FWP_VALUE0 {
         r#type: FWP_UINT8,
         Anonymous: FWP_VALUE0_0 { uint8: spec.weight },
@@ -199,17 +230,17 @@ fn add_filter(engine: HANDLE, spec: &FilterSpec) -> Result<(), NetError> {
     };
     let mut id = 0u64;
     // SAFETY: `engine` est un handle ouvert ; `filter`, `name`, `conds` et
-    // `luids` (cibles des pointeurs) vivent jusqu'à la fin de l'appel, qui
+    // `slots` (cibles des pointeurs) vivent jusqu'à la fin de l'appel, qui
     // copie la structure ; SD nul = descripteur par défaut ; `id` sortie valide.
     let rc = unsafe { FwpmFilterAdd0(engine, &raw const filter, ptr::null_mut(), &raw mut id) };
     check("FwpmFilterAdd0", rc)
 }
 
-fn add_sublayer(engine: HANDLE) -> Result<(), NetError> {
+fn add_sublayer(engine: HANDLE, sublayer: u128) -> Result<(), NetError> {
     let mut name = to_wide("fortivpn-rs kill-switch");
     // SAFETY: structure C, tout-à-zéro valide.
     let mut sub: FWPM_SUBLAYER0 = unsafe { std::mem::zeroed() };
-    sub.subLayerKey = GUID::from_u128(wfp::SUBLAYER_GUID);
+    sub.subLayerKey = GUID::from_u128(sublayer);
     sub.displayData = FWPM_DISPLAY_DATA0 {
         name: name.as_mut_ptr(),
         description: ptr::null_mut(),
@@ -221,15 +252,26 @@ fn add_sublayer(engine: HANDLE) -> Result<(), NetError> {
     check("FwpmSubLayerAdd0", rc)
 }
 
-fn install_all(engine: HANDLE, specs: &[FilterSpec]) -> Result<(), NetError> {
-    add_sublayer(engine)?;
-    specs.iter().try_for_each(|s| add_filter(engine, s))
+fn install_all(engine: HANDLE, specs: &[FilterSpec], sublayer: u128) -> Result<(), NetError> {
+    add_sublayer(engine, sublayer)?;
+    specs
+        .iter()
+        .try_for_each(|s| add_filter(engine, s, sublayer))
 }
 
 /// Installe `specs` dans une session dynamique, en une transaction atomique.
 /// Retourne `None` si `specs` est vide (aucune session ouverte). Échec : rien
 /// n'est installé et le handle est fermé.
 pub(crate) fn install(specs: &[FilterSpec]) -> Result<Option<Firewall>, NetError> {
+    install_in(specs, wfp::SUBLAYER_GUID)
+}
+
+/// Comme [`install`], dans la sous-couche `sublayer` (la protection de
+/// reconnexion a la sienne : elle coexiste avec les filtres du tunnel).
+pub(crate) fn install_in(
+    specs: &[FilterSpec],
+    sublayer: u128,
+) -> Result<Option<Firewall>, NetError> {
     if specs.is_empty() {
         return Ok(None);
     }
@@ -238,7 +280,7 @@ pub(crate) fn install(specs: &[FilterSpec]) -> Result<Option<Firewall>, NetError
     check("FwpmTransactionBegin0", unsafe {
         FwpmTransactionBegin0(fw.engine, 0)
     })?;
-    if let Err(e) = install_all(fw.engine, specs) {
+    if let Err(e) = install_all(fw.engine, specs, sublayer) {
         // SAFETY: transaction ouverte ci-dessus sur ce handle.
         let _ = unsafe { FwpmTransactionAbort0(fw.engine) };
         return Err(e);

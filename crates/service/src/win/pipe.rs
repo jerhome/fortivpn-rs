@@ -46,6 +46,14 @@ pub(super) async fn serve<R: SessionRunner>(
         }
         // Nouvelle instance avant de traiter celle-ci : le nom n'est jamais libre.
         let client = std::mem::replace(&mut server, create_instance(false)?);
+        // Identité du demandeur, relevée avant tout `await` (emprunt d'identité).
+        let caller = match super::caller::identify(&client) {
+            Ok(caller) => caller,
+            Err(e) => {
+                tracing::warn!(error = %e, "identité du client illisible : connexion refusée");
+                continue;
+            }
+        };
         let Ok(permit) = Arc::clone(&limit).try_acquire_owned() else {
             tracing::warn!("trop de clients simultanés : connexion refusée");
             continue;
@@ -53,7 +61,7 @@ pub(super) async fn serve<R: SessionRunner>(
         let controller = Arc::clone(&controller);
         tokio::spawn(async move {
             let _permit = permit;
-            serve_connection(client, &controller).await;
+            serve_connection(client, &controller, &caller).await;
         });
     }
 }

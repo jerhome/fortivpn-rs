@@ -37,16 +37,13 @@ fn subtract(net: Ipv4Net, excl: Ipv4Net, out: &mut Vec<Ipv4Net>) -> Result<(), C
         return check_len(out.len());
     }
     // `net` contient strictement `excl` : on le coupe en deux et on recommence.
-    match net.subnets(net.prefix_len() + 1) {
-        Ok(halves) => {
-            for half in halves {
-                subtract(half, excl, out)?;
-            }
+    if let Ok(halves) = net.subnets(net.prefix_len() + 1) {
+        for half in halves {
+            subtract(half, excl, out)?;
         }
-        Err(_) => {
-            out.push(net);
-            check_len(out.len())?;
-        }
+    } else {
+        out.push(net);
+        check_len(out.len())?;
     }
     Ok(())
 }
