@@ -4,10 +4,13 @@
 //! écrit n'en contient pas (la validation de `config` refuse ces clés).
 
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
 use fortivpn_app::config::{self, Config};
 use fortivpn_core::sslvpn::CertFingerprint;
 use netproxy::{DEFAULT_SOCKS, Forward, ProxyConfig};
+
+use crate::model::Mode;
 
 /// Valeurs saisies dans l'écran « Réglages » (texte brut).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -149,9 +152,57 @@ pub fn blank_config() -> Config {
     }
 }
 
+/// Fichier d'état non secret voisin de la configuration (dernier mode choisi).
+pub fn state_path(config_path: &Path) -> PathBuf {
+    config_path.with_file_name("gui-state.toml")
+}
+
+/// Dernier mode mémorisé (`None` : fichier absent ou illisible).
+pub fn load_mode(config_path: &Path) -> Option<Mode> {
+    let text = std::fs::read_to_string(state_path(config_path)).ok()?;
+    text.lines().find_map(|l| {
+        match l
+            .trim()
+            .strip_prefix("mode")?
+            .trim()
+            .strip_prefix('=')?
+            .trim()
+        {
+            "\"service\"" => Some(Mode::Service),
+            "\"proxy\"" => Some(Mode::Proxy),
+            _ => None,
+        }
+    })
+}
+
+/// Mémorise le mode (création du dossier ; meilleur effort, l'erreur est renvoyée).
+pub fn save_mode(config_path: &Path, mode: Mode) -> std::io::Result<()> {
+    let path = state_path(config_path);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let name = match mode {
+        Mode::Service => "service",
+        Mode::Proxy => "proxy",
+    };
+    std::fs::write(path, format!("mode = \"{name}\"\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn last_mode_round_trips_and_creates_the_directory() {
+        let dir = std::env::temp_dir().join(format!("fvpn-gui-mode-{}", std::process::id()));
+        let cfg = dir.join("sub").join("config.toml");
+        assert_eq!(load_mode(&cfg), None);
+        save_mode(&cfg, Mode::Service).unwrap();
+        assert_eq!(load_mode(&cfg), Some(Mode::Service));
+        save_mode(&cfg, Mode::Proxy).unwrap();
+        assert_eq!(load_mode(&cfg), Some(Mode::Proxy));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     const FP: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 

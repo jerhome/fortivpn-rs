@@ -1,48 +1,48 @@
-# À faire par l'utilisateur (tenu à jour par Claude)
+# Guide de test — à faire par l'utilisateur
 
-Dernière mise à jour : 2026-11-13 20h05. Rien ici ne bloque les agents ; à traiter quand tu as un moment.
+Dernière mise à jour : 2026-11-13 ~23h. Binaires dans `~/fortivpn-dist/` (voir `BUILD.txt`) ;
+depuis Windows : `\\wsl.localhost\Debian\home\<utilisateur>\fortivpn-dist\`.
+Rien ici ne bloque les agents. Les logs ne contiennent jamais ton mot de passe.
+
+## Linux / WSL
+
+### L1 — Stabilité du tunnel complet (CLI, ~5 min) — prioritaire
+Valide le correctif « filtre IPv6 » (coupures à ~40 s auparavant).
+1. Si besoin, retirer une route résiduelle : `ip route show <IP passerelle>/32` → si présente : `sudo ip route del <IP passerelle>/32`.
+2. `sudo ~/fortivpn-dist/fortivpn-linux -vv connect 2>&1 | tee ~/fortivpn-tests/trace-$(date +%H%M).log`
+   (plus besoin de `-c` : sous sudo, ta config est trouvée automatiquement).
+3. Laisser tourner **≥ 3 min** (idéalement 10), faire un `ping` vers une IP interne dans un autre terminal, puis Ctrl+C.
+4. Me dire « fini » : je lis la trace (`trame PPP de contrôle`, `fin du tunnel`, `paquet non IPv4 ignoré`).
+
+### L2 — Interface graphique Linux (WSLg, 2 min)
+1. `~/fortivpn-dist/fortivpn-gui-linux` (**sans sudo**).
+2. Vérifier : Réglages s'ouvre, mode Proxy, connexion, écran « Connecté », « À propos » (Made with Slint), déconnexion.
+3. Test : `curl --socks5-hostname 127.0.0.1:<port socks> http://<site interne>`.
+
+### L3 — Second compte VPN refusé sans cookie (diagnostic, 1 min)
+1. Mettre ce compte dans la config (ou me demander de le faire).
+2. `sudo ~/fortivpn-dist/fortivpn-linux -vv connect` → me coller la ligne « réponse logincheck » (résumé sans secret) et le message d'erreur final.
+
+## Windows (sans droits admin : mode proxy)
+
+### W1 — Interface graphique (5 min)
+1. Copier `fortivpn-gui.exe` dans un dossier local (ex. `%USERPROFILE%\fortivpn\`), puis dans PowerShell : `Unblock-File $env:USERPROFILE\fortivpn\fortivpn-gui.exe`.
+2. Double-clic : au premier lancement, **Réglages s'ouvre tout seul** → passerelle, port 443, utilisateur, port SOCKS (**18080** recommandé, voir W2) → Enregistrer.
+3. Mode **Proxy**, mot de passe, Connecter. Si le certificat est refusé : bouton « Épingler cette empreinte » (après vérification).
+4. Navigateur : **Firefox** → Paramètres réseau → proxy manuel, SOCKS v5 `127.0.0.1` port `18080`, cocher « DNS distant ». Ouvrir un site interne.
+
+### W2 — Message de port (1 min)
+1. Si l'interface affiche une erreur de port : noter le code `os error 10013` (port **réservé par Windows**) ou `10048` (**déjà utilisé**).
+2. PowerShell : `netsh int ipv4 show excludedportrange protocol=tcp` → me dire si 1080 est dans une plage.
+
+### W3 — Avec l'admin : tunnel complet via le service
+1. L'admin copie `fortivpn.exe` + `wintun.dll` (wintun.net, 0.14.1, `bin\amd64`) dans `C:\Program Files\fortivpn-rs\`, crée `%ProgramData%\fortivpn-rs\config.toml`, puis lance `fortivpn.exe service install`.
+2. Ensuite, sans admin : interface en mode **Service**, ou `fortivpn.exe connect --service` / `status` / `disconnect`.
+3. Checklist complète : story 3.W de `docs/BACKLOG.md`.
+
+## Ce qu'il faut me renvoyer
+- L1 : « fini » (je lis `~/fortivpn-tests/`) ; L3 : 2 lignes de log ; W1/W2 : messages d'erreur ; ton ressenti vs FortiClient (temps de connexion).
 
 ## Questions en attente
-
-1. ~~Commit~~ : fait (poussé sur `jerhome/fortivpn-rs`).
-2. ~~« annule »~~ : rien à annuler.
-3. **Temps de connexion FortiClient** (story S0.2) : « semble bien meilleur » avec fortivpn-rs (~100 ms) — chiffre FortiClient à confirmer.
-4. **Relevé de jetons** (%) vers 21h00, pour réajuster le nombre d'agents.
-
-## Tests à faire
-
-### T1 — Terminer le test réel dans WSL (5 min)
-```bash
-cd ~/claude/vpn-rust
-scripts/wsl-real-test.sh -t <IP interne connue> -d 60
-```
-- Laisser aller jusqu'au bout (déconnexion automatique après 60 s) puis me dire « fini » : je lis `~/fortivpn-tests/` (nettoyage des routes, pings, stabilité).
-- Si tu ne connais pas d'IP interne : sans `-t`, on valide déjà la tenue de session et le nettoyage.
-
-### T2 — Mode proxy sous Windows, sans droits admin (10 min) — après la story 7.2
-- Je ferai recompiler `fortivpn.exe` (dans `~/fortivpn-dist/`) avec les derniers correctifs avant ce test.
-- Config `%APPDATA%\fortivpn-rs\config.toml` : la même qu'en WSL + une section :
-  ```toml
-  [proxy]
-  socks = "127.0.0.1:1080"
-  # forward = ["127.0.0.1:13389=<serveur RDP interne>:3389"]
-  ```
-- Copier l'exe dans un dossier local (ex. `%USERPROFILE%\fortivpn\`), pas de `wintun.dll` nécessaire en mode proxy ; `trusted_cert` comme en WSL.
-- Lancer `.\fortivpn.exe -v connect` (PowerShell normal, **pas** admin ; SmartScreen : « Informations complémentaires → Exécuter quand même »). Arrêter tout fortivpn WSL qui occuperait le port 1080.
-- Tester : `curl.exe --socks5-hostname 127.0.0.1:1080 http://<site interne>` ou Firefox (SOCKS v5 127.0.0.1:1080 + « DNS distant »).
-
-### T1-bis — Résultat WSL du 2026-11-13 20h41
-- Lancé sans `sudo` : auth 188 ms, config (split, 2 routes, 2 DNS), PPP OK, puis échec attendu de création TUN (EPERM, code 6) et déconnexion propre.
-- À refaire : `sudo ~/fortivpn-dist/fortivpn-linux -c ~/.config/fortivpn-rs/config.toml connect`, ou mode proxy sans sudo (`[proxy]` dans la config + `curl --socks5-hostname 127.0.0.1:1080 ...`).
-
-### T3 — Avec l'admin (lundi/mardi) : service Windows + recette 3.W
-- L'admin lance une fois : `fortivpn.exe service install` (exe + `wintun.dll` dans `C:\Program Files\fortivpn-rs\`, config dans `%ProgramData%\fortivpn-rs\config.toml`).
-- Ensuite, sans admin : `fortivpn connect --service`, `fortivpn status`, `fortivpn disconnect`.
-- La checklist complète de recette est dans `docs/BACKLOG.md` (story 3.W).
-
-### T1-ter — Après le correctif 2.6 (filtre IPv6 + trace `-vv`)
-- Cause probable des coupures trouvée : des paquets IPv6 émis par Linux sur la TUN partaient dans le tunnel comme s'ils étaient IPv4 ; désormais filtrés.
-- Avant de lancer : `ip route show <IP passerelle>/32` ; si une route est là (résidu d'un run précédent) : `sudo ip route del <IP passerelle>/32`.
-- Lancer avec le **nouveau** binaire (`~/fortivpn-dist/fortivpn-linux`, recompilé après la GUI) :
-  `sudo ~/fortivpn-dist/fortivpn-linux -c ~/.config/fortivpn-rs/config.toml -vv connect 2>&1 | tee ~/fortivpn-tests/trace-$(date +%H%M).log`
-- Laisser tourner ≥ 3 min, puis Ctrl+C. Me donner le fichier : je cherche les lignes « trame PPP de contrôle », « fin du tunnel » et « paquet non IPv4 ignoré ».
+- Temps de connexion de FortiClient (pour comparaison) — fortivpn-rs : ~100–300 ms mesurés.
+- Test d'interopérabilité strongSwan (IPsec 6.4) : nécessite `sudo` + installation de strongSwan → ton accord.

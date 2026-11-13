@@ -63,6 +63,21 @@ pub fn from_reason(reason: &DisconnectReason) -> Exit {
     }
 }
 
+/// Message affiché quand le système refuse la création de l'interface (EPERM/EACCES).
+pub const INSUFFICIENT_RIGHTS: &str = "droits insuffisants : lancez avec sudo (Linux) / via le service \
+     (Windows), ou utilisez le mode proxy ([proxy] dans la config)";
+
+/// L'erreur réseau est un refus de droits (EPERM, EACCES, accès refusé).
+pub fn is_permission_denied(e: &NetError) -> bool {
+    match e {
+        NetError::Io { source, .. } => {
+            source.kind() == std::io::ErrorKind::PermissionDenied
+                || matches!(source.raw_os_error(), Some(1 | 13))
+        }
+        _ => false,
+    }
+}
+
 /// Code de sortie d'un échec de création du backend réseau.
 ///
 /// `netwin` signale une autre instance active par `NetError::AlreadyRunning`.
@@ -90,6 +105,26 @@ Codes de sortie :
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    #[test]
+    fn permission_denied_detection() {
+        let io = |source| NetError::Io {
+            op: "create_tun",
+            source,
+        };
+        assert!(is_permission_denied(&io(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        ))));
+        assert!(is_permission_denied(&io(
+            std::io::Error::from_raw_os_error(1)
+        )));
+        assert!(!is_permission_denied(&io(
+            std::io::Error::from_raw_os_error(2)
+        )));
+        assert!(!is_permission_denied(&NetError::AlreadyRunning));
+        assert!(INSUFFICIENT_RIGHTS.starts_with("droits insuffisants : lancez avec sudo"));
+        assert!(INSUFFICIENT_RIGHTS.contains("[proxy]"));
+    }
 
     use super::*;
 

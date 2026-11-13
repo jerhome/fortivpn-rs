@@ -609,8 +609,10 @@ fn service_conn(conn: &mut Conn, sockets: &mut SocketSet<'_>, now: Instant) -> b
 
     match socket.state() {
         tcp::State::Closed => false,
-        // Fermeture active terminée et tout a été remis au client.
-        tcp::State::TimeWait => conn.to_client.is_none(),
+        // Fermeture active terminée et tout a été remis au client : on retire la
+        // connexion (`false`). Tant que `to_client` est `Some`, des octets peuvent
+        // rester à remettre : on la garde.
+        tcp::State::TimeWait => conn.to_client.is_some(),
         _ => true,
     }
 }

@@ -62,6 +62,14 @@ pub(crate) async fn create<S: System>(
                 op: "create_tun",
                 source,
             },
+            // Droits insuffisants : même forme que l'échec d'ouverture de /dev/net/tun,
+            // reconnue par le CLI pour afficher un message d'aide.
+            tokio_tun::Error::NixError(nix::errno::Errno::EPERM | nix::errno::Errno::EACCES) => {
+                NetError::Io {
+                    op: "create_tun",
+                    source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                }
+            }
             tokio_tun::Error::NixError(e) => NetError::Os {
                 op: "create_tun",
                 reason: e.to_string(),

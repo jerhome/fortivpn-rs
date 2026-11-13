@@ -334,6 +334,51 @@ async fn scenario() {
     peer.abort();
 }
 
+/// Régression : le pair envoie tout puis FIN alors que le client local ne lit
+/// pas encore ; la pile ne doit pas retirer la connexion (TIME-WAIT) tant que
+/// des octets restent à remettre.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slow_reader_gets_full_echo_after_fin() {
+    timeout(Duration::from_secs(60), async {
+        let backend = ProxyBackend::new(ProxyConfig::new(
+            Some("127.0.0.1:0".parse().unwrap()),
+            vec![],
+        ))
+        .unwrap();
+        let proxy = backend.socks_addr().unwrap();
+        let tun = backend.create_tun(&TunOptions::new("proxy")).await.unwrap();
+        let peer = tokio::spawn(gateway_peer(tun.packets));
+        let _guard = backend.apply(&tun.info, &tunnel_config()).await.unwrap();
+
+        let big: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let (code, s) = socks_connect(proxy, &ipv4_req(1, ECHO, 7)).await;
+        assert_eq!(code, 0);
+        let (mut rd, mut wr) = s.into_split();
+        wr.write_all(&big).await.unwrap();
+        wr.shutdown().await.unwrap();
+        // Laisse l'écho et le FIN du pair arriver avant de lire.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Lecture lente : le canal vers le client reste plein pendant que le
+        // FIN du pair est traité par la pile.
+        let mut got = Vec::new();
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = rd.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            got.extend_from_slice(&buf[..n]);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(got.len(), big.len());
+        assert!(got == big, "contenu de l'écho différent");
+        drop(backend);
+        peer.abort();
+    })
+    .await
+    .unwrap();
+}
+
 #[test]
 fn non_loopback_and_busy_port_refused() {
     let c = ProxyConfig::new(Some("0.0.0.0:0".parse().unwrap()), vec![]);

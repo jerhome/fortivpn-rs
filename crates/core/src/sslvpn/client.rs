@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use proto::auth::{
     AuthOutcome, SecondFactor, SessionCookie, TOKENINFO_FTM_PUSH, interpret_logincheck,
+    sanitized_summary,
 };
 use proto::config::{VpnConfig, parse_config};
 use proto::http::{self, ConfigQuery, Gateway, HttpResponse, ResponseParser};
@@ -300,7 +301,7 @@ impl SslVpnClient {
             other => other?,
         };
         drop(request);
-        tracing::debug!(status = response.status(), "réponse logincheck");
+        tracing::debug!(summary = %sanitized_summary(&response), "réponse logincheck");
         let mut outcome = interpret_logincheck(&response);
         if let (
             Some(provider),
@@ -343,7 +344,7 @@ impl SslVpnClient {
             conn = c2;
             response = r2;
             tracing::debug!(
-                status = response.status(),
+                summary = %sanitized_summary(&response),
                 "réponse logincheck (2e facteur)"
             );
             outcome = interpret_logincheck(&response);
@@ -361,6 +362,8 @@ impl SslVpnClient {
             }
             AuthOutcome::HttpStatus(s) => return Err(SslVpnError::HttpStatus(s)),
             AuthOutcome::InvalidCookie(e) => return Err(SslVpnError::InvalidCookie(e)),
+            AuthOutcome::HostCheckRequired => return Err(SslVpnError::HostCheckRequired),
+            AuthOutcome::RealmRequired => return Err(SslVpnError::RealmRequired),
             // NoCookie et variantes futures.
             _ => return Err(SslVpnError::NoCookie),
         };

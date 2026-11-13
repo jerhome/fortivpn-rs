@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use fortivpn_app::sudo;
 use secrecy::SecretString;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -56,6 +57,7 @@ pub fn render(win: &MainWindow, shared: &mut Shared, now: Instant) {
     win.set_forwards(ModelRc::new(VecModel::from(forwards)));
     win.set_reconnect_auto(ui.reconnect_auto);
     win.set_service_hint(ui.service_hint.as_str().into());
+    win.set_root_warning(ui.root_warning.as_str().into());
     let log: Vec<LogItem> = ui
         .log
         .iter()
@@ -84,6 +86,14 @@ pub fn render(win: &MainWindow, shared: &mut Shared, now: Instant) {
         win.set_s_socks_port(form.socks_port.into());
         win.set_s_forwards(form.forwards.into());
         win.set_s_reconnect(form.reconnect);
+    }
+    win.set_service_available(shared.service_available);
+    win.set_pin_offer(ui.visible_pin_offer().unwrap_or_default().into());
+    if let Some(mode) = shared.pending_mode.take() {
+        win.set_mode(mode.index());
+    }
+    if std::mem::take(&mut shared.open_settings) {
+        win.set_settings_open(true);
     }
     if let Some(user) = shared.pending_username.take() {
         win.set_username(user.into());
@@ -154,10 +164,17 @@ pub fn wire(win: &MainWindow, sink: &Sink, worker: &WorkerHandle) {
         }
     });
     let (w, s) = (worker.clone(), sink.clone());
+    let weak = win.as_weak();
     win.on_open_settings(move || {
+        // L'écran s'ouvre toujours, quel que soit le résultat du chargement.
+        if let Some(win) = weak.upgrade() {
+            win.set_settings_open(true);
+        }
         s.update(|sh, _| sh.settings_message.clear());
         w.send(Command::LoadSettings);
     });
+    let w = worker.clone();
+    win.on_pin_fingerprint(move || w.send(Command::PinFingerprint));
     let weak = win.as_weak();
     let w = worker.clone();
     win.on_save_settings(move || {
@@ -170,6 +187,13 @@ pub fn wire(win: &MainWindow, sink: &Sink, worker: &WorkerHandle) {
         w.send(Command::Quit);
         slint::CloseRequestResponse::KeepWindowShown
     });
+}
+
+/// Première lettre en majuscule (texte affiché).
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
 /// Lance l'application : fenêtre, worker, minuteur de durée ; bloque jusqu'à la fin.
@@ -194,9 +218,14 @@ pub fn run(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error
             }
         });
     });
+    if sudo::is_root(&sudo::SystemEnv) {
+        tracing::warn!("{}", sudo::GUI_ROOT_WARNING);
+        eprintln!("fortivpn-gui : {}", sudo::GUI_ROOT_WARNING);
+        sink.lock().ui.root_warning = capitalize(sudo::GUI_ROOT_WARNING);
+    }
     let (worker, thread) = crate::worker::spawn(sink.clone(), config_path)?;
     wire(&win, &sink, &worker);
-    worker.send(Command::LoadSettings);
+    worker.send(Command::Startup);
 
     // Durée de session : mise à jour chaque seconde, sans repasser par le worker.
     let timer = slint::Timer::default();
@@ -226,6 +255,22 @@ mod tests {
 
     use super::*;
     use crate::model::{Mode, ProxyInfo};
+
+    #[test]
+    fn root_warning_is_shown_in_the_window() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = MainWindow::new().unwrap();
+        let mut shared = Shared::new();
+        render(&win, &mut shared, Instant::now());
+        assert_eq!(win.get_root_warning().as_str(), "");
+        shared.ui.root_warning = capitalize(sudo::GUI_ROOT_WARNING);
+        render(&win, &mut shared, Instant::now());
+        assert!(
+            win.get_root_warning()
+                .as_str()
+                .starts_with("Inutile de lancer l'interface avec sudo")
+        );
+    }
 
     #[test]
     fn render_reflects_state_and_clears_nothing_secret() {
@@ -288,5 +333,110 @@ mod tests {
         assert_eq!(win.get_otp_code().as_str(), "");
         worker.send(Command::Quit);
         thread.join().unwrap();
+    }
+
+    fn wait_until(sink: &Sink, cond: impl Fn(&Shared) -> bool) {
+        for _ in 0..500 {
+            if cond(&sink.lock()) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("condition non atteinte");
+    }
+
+    #[test]
+    fn settings_button_always_opens_the_screen() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = MainWindow::new().unwrap();
+        let sink = Sink::new(|_| {});
+        let missing = std::env::temp_dir()
+            .join("fvpn-gui-absent")
+            .join("config.toml");
+        let (worker, thread) = crate::worker::spawn(sink.clone(), Some(missing)).unwrap();
+        wire(&win, &sink, &worker);
+        assert!(!win.get_settings_open());
+        win.invoke_open_settings();
+        assert!(win.get_settings_open(), "l'écran Réglages ne s'ouvre pas");
+        worker.send(Command::Quit);
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn first_run_opens_settings_with_welcome_and_save_creates_the_file() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = std::env::temp_dir().join(format!("fvpn-gui-first-{}", std::process::id()));
+        let path = dir.join("nouveau").join("config.toml");
+        let win = MainWindow::new().unwrap();
+        let sink = Sink::new(|_| {});
+        let (worker, thread) = crate::worker::spawn(sink.clone(), Some(path.clone())).unwrap();
+        wire(&win, &sink, &worker);
+        worker.send(Command::Startup);
+        wait_until(&sink, |s| s.open_settings && s.pending_form.is_some());
+        render(&win, &mut sink.lock(), Instant::now());
+        assert!(win.get_settings_open());
+        assert_eq!(win.get_mode(), 1, "mode Proxy par défaut");
+        assert_eq!(win.get_s_host().as_str(), "");
+        assert_eq!(win.get_s_port().as_str(), "443");
+        assert!(
+            win.get_settings_message()
+                .as_str()
+                .starts_with("Première utilisation : renseignez la passerelle")
+        );
+        assert!(!path.exists());
+
+        win.set_s_host("vpn.example.com".into());
+        win.set_s_user("alice".into());
+        win.invoke_save_settings();
+        wait_until(&sink, |s| {
+            s.settings_ok && s.settings_message == "Réglages enregistrés."
+        });
+        let saved = fortivpn_app::config::load(&path).unwrap();
+        assert_eq!(saved.host, "vpn.example.com");
+        assert_eq!(saved.username, "alice");
+        worker.send(Command::Quit);
+        thread.join().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn unusable_config_still_leaves_a_working_settings_form() {
+        i_slint_backend_testing::init_no_event_loop();
+        let dir = std::env::temp_dir().join(format!("fvpn-gui-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "ceci n'est pas du toml = = =").unwrap();
+        let win = MainWindow::new().unwrap();
+        let sink = Sink::new(|_| {});
+        let (worker, thread) = crate::worker::spawn(sink.clone(), Some(path)).unwrap();
+        wire(&win, &sink, &worker);
+        win.invoke_open_settings();
+        wait_until(&sink, |s| s.pending_form.is_some());
+        render(&win, &mut sink.lock(), Instant::now());
+        assert!(win.get_settings_open());
+        assert!(
+            win.get_settings_message()
+                .as_str()
+                .starts_with("Lecture impossible")
+        );
+        worker.send(Command::Quit);
+        thread.join().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn service_mode_is_greyed_with_explanation_when_unavailable() {
+        i_slint_backend_testing::init_no_event_loop();
+        let win = MainWindow::new().unwrap();
+        let mut shared = Shared::new();
+        shared.service_available = false;
+        shared.ui.service_hint = crate::worker::SERVICE_ABSENT.into();
+        render(&win, &mut shared, Instant::now());
+        assert!(!win.get_service_available());
+        assert!(
+            win.get_service_hint()
+                .as_str()
+                .starts_with("Service non installé")
+        );
     }
 }

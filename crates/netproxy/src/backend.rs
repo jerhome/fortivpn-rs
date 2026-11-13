@@ -26,12 +26,26 @@ pub enum ProxyError {
     Config(#[from] ProxyConfigError),
     /// Port déjà utilisé par une autre application.
     #[error(
-        "le port {addr} est déjà utilisé par une autre application ; \
+        "le port {addr} est déjà utilisé par une autre application (os error {code}) ; \
          changez le port dans la section [proxy] (`socks` ou `forward`)"
     )]
     AddrInUse {
         /// Adresse demandée.
         addr: SocketAddr,
+        /// Code d'erreur OS (`WSAEADDRINUSE` 10048, `EADDRINUSE` 98…).
+        code: i32,
+    },
+    /// Accès refusé : port réservé par Windows (plages exclues) ou privilégié.
+    #[error(
+        "impossible d'écouter sur {addr} : port réservé par Windows (plages exclues \
+         Hyper-V/WSL) ou accès refusé (os error {code}) ; choisissez un autre port dans \
+         [proxy] (ex. 18080) — vérification : netsh int ipv4 show excludedportrange protocol=tcp"
+    )]
+    PortReserved {
+        /// Adresse demandée.
+        addr: SocketAddr,
+        /// Code d'erreur OS (`WSAEACCES` 10013, `EACCES` 13).
+        code: i32,
     },
     /// Écoute impossible (droits, adresse invalide…).
     #[error("écoute sur {addr} impossible : {source}")]

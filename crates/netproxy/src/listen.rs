@@ -50,18 +50,32 @@ fn open(addr: SocketAddr) -> io::Result<TcpListener> {
     Ok(sock.into())
 }
 
+/// Classe une erreur de bind (codes OS injectables pour les tests).
+fn classify(addr: SocketAddr, source: io::Error, windows: bool) -> ProxyError {
+    let raw = source.raw_os_error();
+    let code = raw.unwrap_or(0);
+    let in_use = if windows {
+        raw == Some(10048)
+    } else {
+        source.kind() == io::ErrorKind::AddrInUse
+    };
+    let denied = if windows {
+        raw == Some(10013)
+    } else {
+        raw == Some(13)
+    };
+    if in_use {
+        ProxyError::AddrInUse { addr, code }
+    } else if denied {
+        ProxyError::PortReserved { addr, code }
+    } else {
+        ProxyError::Bind { addr, source }
+    }
+}
+
 /// Ouvre un écouteur TCP exclusif, non bloquant.
 pub(crate) fn bind_exclusive(addr: SocketAddr) -> Result<TcpListener, ProxyError> {
-    open(addr).map_err(|source| {
-        // WSAEACCES (10013) : conflit avec un écouteur exclusif sous Windows.
-        if source.kind() == io::ErrorKind::AddrInUse
-            || source.raw_os_error() == Some(10013) && cfg!(windows)
-        {
-            ProxyError::AddrInUse { addr }
-        } else {
-            ProxyError::Bind { addr, source }
-        }
-    })
+    open(addr).map_err(|source| classify(addr, source, cfg!(windows)))
 }
 
 #[cfg(test)]
@@ -79,5 +93,34 @@ mod tests {
             msg.contains(&addr.to_string()) && msg.contains("[proxy]"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn mapping_codes() {
+        let a: SocketAddr = "127.0.0.1:1080".parse().unwrap();
+        let e = |c| io::Error::from_raw_os_error(c);
+        assert!(matches!(
+            classify(a, e(10048), true),
+            ProxyError::AddrInUse { code: 10048, .. }
+        ));
+        let r = classify(a, e(10013), true);
+        assert!(matches!(r, ProxyError::PortReserved { code: 10013, .. }));
+        let m = r.to_string();
+        assert!(
+            m.contains("os error 10013") && m.contains("excludedportrange"),
+            "{m}"
+        );
+        assert!(matches!(
+            classify(a, e(13), false),
+            ProxyError::PortReserved { code: 13, .. }
+        ));
+        assert!(matches!(
+            classify(a, e(98), false),
+            ProxyError::AddrInUse { code: 98, .. }
+        ));
+        assert!(matches!(
+            classify(a, e(10049), true),
+            ProxyError::Bind { .. }
+        ));
     }
 }

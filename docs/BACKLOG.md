@@ -78,7 +78,7 @@ uniquement sur demande explicite de l'utilisateur (story **3.W**).
 - [x] **4.3** (WN) Service Windows (SYSTEM) + CLI non-admin via named pipe.
 - [x] **4.4** (RP) Logs `tracing` + chronométrage de chaque étape de connexion. **MVP**
 - [x] **4.6** (RP) Finitions : variantes d'erreur dédiées (`TransportError::SecondFactorRequired`, `NetError::AlreadyRunning`) et codes de sortie CLI associés ; affichage lisible de `ClockJump` ; option TOML `[reconnect]` (activer/désactiver, backoff max) ; `disconnect_timeout` ≤ 4 s sous Windows (arrêt système).
-- [ ] **4.7** (RP) Message clair sur `EPERM` à la création de la TUN : « droits insuffisants : lancez avec sudo (Linux) / via le service (Windows), ou utilisez le mode proxy ([proxy] dans la config) ». Et sous sudo sans `-c` : chercher la config de `SUDO_USER` (ou le suggérer dans le message d'erreur). GUI lancée en root (sudo) : avertir « inutile de lancer l'interface avec sudo (mode proxy) » et utiliser la config de `SUDO_USER`.
+- [x] **4.7** (RP) Message clair sur `EPERM` à la création de la TUN : « droits insuffisants : lancez avec sudo (Linux) / via le service (Windows), ou utilisez le mode proxy ([proxy] dans la config) ». Et sous sudo sans `-c` : chercher la config de `SUDO_USER` (ou le suggérer dans le message d'erreur). GUI lancée en root (sudo) : avertir « inutile de lancer l'interface avec sudo (mode proxy) » et utiliser la config de `SUDO_USER`.
 - [ ] **4.5** Icône zone de notification (plus tard).
 
 ## Epic 7 — Mode sans droits administrateur
@@ -95,7 +95,7 @@ Une seule base de code Rust multiplateforme en **Slint** (choix validé par l'ut
 - [x] **8.0** Maquettes et design : écrans connexion / état (étapes + durées) / journal / réglages, thème sombre. _(maquette validée : docs/gui/maquette.html)_
 - [x] **8.1** GUI Windows : connexion (mot de passe saisi, jamais stocké), état temps réel, déconnexion, journal, réglages (config TOML, mode proxy) ; fonctionne **sans droits admin** (mode proxy, ou via le service 4.3 une fois installé).
 - [x] **8.5** Licence Slint « Royalty-free » (choix utilisateur 2026-11-13) : écran « À propos » avec le widget `AboutSlint` / mention « Made with Slint », fichier de licences tierces (Slint + dépendances), README mis à jour.
-- [ ] **8.6** (RP) Première utilisation guidée (retour terrain Windows 2026-11-13) : config absente → ouvrir directement Réglages avec un assistant (passerelle, port, utilisateur, épinglage proposé après 1re connexion) au lieu d'une erreur ; mode Service grisé avec explication si le service n'est pas installé, mode Proxy sélectionné par défaut ; mémoriser le dernier mode choisi.
+- [x] **8.6** (RP) Première utilisation guidée (retour terrain Windows 2026-11-13) : config absente → ouvrir directement Réglages avec un assistant (passerelle, port, utilisateur, épinglage proposé après 1re connexion) au lieu d'une erreur ; mode Service grisé avec explication si le service n'est pas installé, mode Proxy sélectionné par défaut ; mémoriser le dernier mode choisi. **Bug terrain Windows** : le bouton Réglages ne s'ouvre pas (probablement quand la config est absente) — à corriger en priorité dans cette story.
 - [ ] **8.2** Icône de zone de notification + notifications (fusionne 4.5).
 - [ ] **8.3** Distribution Windows : exe portable (+ wintun.dll pour le mode service), icône, version.
 - [ ] **8.4** (priorité basse) GUI Linux X11/Wayland — même base de code, tests dans WSLg.

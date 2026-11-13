@@ -1,7 +1,7 @@
 //! Interprétation de la réponse à `POST /remote/logincheck` (`docs/protocol.md` §4.3)
 //! et cookie de session `SVPNCOOKIE`.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroizing;
@@ -159,6 +159,10 @@ pub enum AuthOutcome {
     HttpStatus(u16),
     /// Statut 200 sans cookie ni `tokeninfo`.
     NoCookie,
+    /// `redir=` vers un contrôle de conformité du poste (host-check), non pris en charge.
+    HostCheckRequired,
+    /// `redir=` vers un autre realm/portail : le realm doit être configuré.
+    RealmRequired,
     /// `SVPNCOOKIE` non vide mais invalide (caractères interdits, trop long).
     InvalidCookie(CookieError),
 }
@@ -237,7 +241,167 @@ pub fn interpret_logincheck(response: &HttpResponse) -> AuthOutcome {
             state: ChallengeState::from_body(response.body()),
         });
     }
+    if let Some(redir) = token_value(response.body(), b"redir=") {
+        let path = path_only(redir).to_ascii_lowercase();
+        let lower = String::from_utf8_lossy(redir).to_ascii_lowercase();
+        if path.contains("hostcheck") || path.contains("host_check") || path.contains("host-check")
+        {
+            return AuthOutcome::HostCheckRequired;
+        }
+        if path.starts_with("/remote/login") && lower.contains("realm=") {
+            return AuthOutcome::RealmRequired;
+        }
+    }
+    if looks_like_login_page(response.body()) {
+        return AuthOutcome::BadCredentials;
+    }
     AuthOutcome::NoCookie
+}
+
+/// Chemin seul (sans `?query` ni `#fragment`), borné, sans caractère de contrôle.
+fn path_only(v: &[u8]) -> String {
+    let end = v
+        .iter()
+        .position(|&b| b == b'?' || b == b'#')
+        .unwrap_or(v.len());
+    String::from_utf8_lossy(&v[..end])
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(100)
+        .collect()
+}
+
+fn find_ci(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len())
+        .position(|w| w.eq_ignore_ascii_case(needle))
+}
+
+fn looks_like_html(body: &[u8]) -> bool {
+    find_ci(body, b"<html").is_some() || find_ci(body, b"<form").is_some()
+}
+
+/// Noms des champs `<input name="...">` (borné à 16 noms de 40 caractères).
+fn form_field_names(body: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while out.len() < 16 {
+        let Some(i) = find_ci(rest, b"<input") else {
+            break;
+        };
+        rest = &rest[i + 6..];
+        let tag_end = rest.iter().position(|&b| b == b'>').unwrap_or(rest.len());
+        let tag = &rest[..tag_end];
+        if let Some(n) = find_ci(tag, b"name=") {
+            let v = &tag[n + 5..];
+            let (q, v) = match v.first() {
+                Some(&q @ (b'"' | b'\'')) => (Some(q), &v[1..]),
+                _ => (None, v),
+            };
+            let end = v
+                .iter()
+                .position(|&b| match q {
+                    Some(q) => b == q,
+                    None => b.is_ascii_whitespace(),
+                })
+                .unwrap_or(v.len());
+            let name: String = String::from_utf8_lossy(&v[..end])
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                .take(40)
+                .collect();
+            if !name.is_empty() {
+                out.push(name);
+            }
+        }
+        rest = &rest[tag_end..];
+    }
+    out
+}
+
+fn looks_like_login_page(body: &[u8]) -> bool {
+    looks_like_html(body)
+        && form_field_names(body).iter().any(|n| {
+            let n = n.to_ascii_lowercase();
+            n == "credential" || n == "password" || n == "username"
+        })
+}
+
+fn html_title(body: &[u8]) -> Option<String> {
+    let i = find_ci(body, b"<title")?;
+    let after = &body[i..];
+    let gt = after.iter().position(|&b| b == b'>')?;
+    let after = &after[gt + 1..];
+    let end = find_ci(after, b"</title").unwrap_or(after.len());
+    let t: String = String::from_utf8_lossy(&after[..end])
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(80)
+        .collect();
+    Some(t.trim().to_owned())
+}
+
+/// Résumé **assaini** d'une réponse `logincheck`, pour les journaux de débogage :
+/// statut, noms des `Set-Cookie`, chemin de `Location`, clés `clé=` du corps, `ret`,
+/// chemin de `redir`, présence de `tokeninfo`/`chal_msg`, titre et champs d'un corps HTML.
+/// Aucune valeur (cookie, magic, reqid, code…) n'est incluse. Longueur bornée.
+pub fn sanitized_summary(response: &HttpResponse) -> String {
+    let body = response.body();
+    let mut set_cookies = Vec::new();
+    for v in response.header_values("set-cookie").take(8) {
+        let pair = v.split(|&b| b == b';').next().unwrap_or_default();
+        let name = pair.split(|&b| b == b'=').next().unwrap_or_default();
+        set_cookies.push(
+            String::from_utf8_lossy(name)
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                .take(40)
+                .collect::<String>(),
+        );
+    }
+    let location = response.location().map(|l| path_only(l.as_bytes()));
+    let mut keys: Vec<String> = Vec::new();
+    for t in tokens(body) {
+        if let Some(eq) = t.iter().position(|&b| b == b'=') {
+            let k: String = String::from_utf8_lossy(&t[..eq])
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                .take(24)
+                .collect();
+            if !k.is_empty() && k.len() == eq && !keys.contains(&k) && keys.len() < 24 {
+                keys.push(k);
+            }
+        }
+    }
+    let ret = token_value(body, b"ret=").map(|v| {
+        String::from_utf8_lossy(v)
+            .chars()
+            .filter(char::is_ascii_digit)
+            .take(3)
+            .collect::<String>()
+    });
+    let redir = token_value(body, b"redir=").map(path_only);
+    let html = looks_like_html(body);
+    let mut s = format!(
+        "status={} set_cookie={:?} location={:?} body_len={} keys={:?} ret={:?} redir={:?} tokeninfo={} chal_msg={}",
+        response.status(),
+        set_cookies,
+        location,
+        body.len(),
+        keys,
+        ret,
+        redir,
+        token_value(body, b"tokeninfo=").is_some(),
+        token_value(body, b"chal_msg=").is_some(),
+    );
+    if html {
+        let _ = write!(
+            s,
+            " html_title={:?} form_fields={:?}",
+            html_title(body),
+            form_field_names(body)
+        );
+    }
+    s
 }
 
 #[cfg(test)]
@@ -412,5 +576,82 @@ mod tests {
         let dbg = format!("{o:?}");
         assert!(!dbg.contains(COOKIE));
         assert!(dbg.contains("REDACTED"));
+    }
+
+    fn raw_resp(head: &str, body: &str) -> HttpResponse {
+        raw(&format!(
+            "HTTP/1.1 200 OK\r\n{head}Content-Length: {}\r\n\r\n{body}",
+            body.len()
+        ))
+    }
+
+    #[test]
+    fn hostcheck_redir() {
+        let r = raw_resp(
+            "",
+            "ret=1,redir=/remote/hostcheck_install?auth_type=1&magic=SECRETMAGIC",
+        );
+        assert!(matches!(
+            interpret_logincheck(&r),
+            AuthOutcome::HostCheckRequired
+        ));
+    }
+
+    #[test]
+    fn realm_redir() {
+        let r = raw_resp("", "ret=1,redir=/remote/login?realm=corp&lang=fr");
+        assert!(matches!(
+            interpret_logincheck(&r),
+            AuthOutcome::RealmRequired
+        ));
+    }
+
+    #[test]
+    fn html_login_page_is_bad_credentials() {
+        let r = raw_resp(
+            "",
+            "<html><head><title>Login</title></head><form><input name=\"username\"><input type=password name='credential'></form></html>",
+        );
+        assert!(matches!(
+            interpret_logincheck(&r),
+            AuthOutcome::BadCredentials
+        ));
+    }
+
+    #[test]
+    fn residual_no_cookie() {
+        let r = raw_resp("", "ret=1,redir=/remote/index");
+        assert!(matches!(interpret_logincheck(&r), AuthOutcome::NoCookie));
+    }
+
+    #[test]
+    fn summary_has_no_secret() {
+        let r = raw_resp(
+            "Set-Cookie: SVPNCOOKIE=TOPSECRETCOOKIE; path=/\r\nSet-Cookie: other=ZZZ\r\nLocation: /remote/login?code=SECRETCODE\r\n",
+            "ret=2,reqid=SECRETREQID,magic=SECRETMAGIC,redir=/remote/x?magic=SECRETMAGIC,tokeninfo=,chal_msg=Enter SECRETCHAL\n<html><title>Portal</title><input name=\"credential\" value=\"SECRETPW\"></html>",
+        );
+        let s = sanitized_summary(&r);
+        for bad in [
+            "TOPSECRET",
+            "SECRETCODE",
+            "SECRETREQID",
+            "SECRETMAGIC",
+            "SECRETCHAL",
+            "SECRETPW",
+            "ZZZ",
+        ] {
+            assert!(!s.contains(bad), "{bad} dans {s}");
+        }
+        for ok in [
+            "SVPNCOOKIE",
+            "reqid",
+            "/remote/login",
+            "/remote/x",
+            "Portal",
+            "credential",
+            "tokeninfo=true",
+        ] {
+            assert!(s.contains(ok), "{ok} absent de {s}");
+        }
     }
 }

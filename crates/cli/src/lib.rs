@@ -9,6 +9,7 @@ pub mod exit;
 pub mod logging;
 pub mod platform;
 pub mod run;
+pub mod sudo;
 pub mod svc;
 pub mod transport;
 

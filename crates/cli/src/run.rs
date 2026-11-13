@@ -140,6 +140,12 @@ pub fn describe_reason(reason: &DisconnectReason) -> String {
     match reason {
         DisconnectReason::Requested => "arrêt demandé".to_owned(),
         DisconnectReason::ConnectFailed(e) => format!("échec de la connexion : {e}"),
+        DisconnectReason::NetworkFailed(e) if crate::exit::is_permission_denied(e) => {
+            format!(
+                "échec de la configuration réseau : {}",
+                crate::exit::INSUFFICIENT_RIGHTS
+            )
+        }
         DisconnectReason::NetworkFailed(e) => format!("échec de la configuration réseau : {e}"),
         DisconnectReason::TransportFailed(e) => format!("tunnel interrompu : {e}"),
         DisconnectReason::TransportClosed => "session fermée par la passerelle".to_owned(),
@@ -157,7 +163,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use fortivpn_core::fake::{FakeNetBackend, FakeTransport, NetOp, TransportEvent};
-    use fortivpn_core::{DnsConfig, Ipv4Config, RoutingMode, TunnelConfig};
+    use fortivpn_core::{DnsConfig, Ipv4Config, NetError, RoutingMode, TunnelConfig};
     use tokio::sync::oneshot;
 
     use super::*;
@@ -307,6 +313,21 @@ mod tests {
         ));
         assert!(describe_reason(&reason).contains("double authentification non prise en charge"));
         assert_eq!(from_reason(&reason), Exit::SecondFactor);
+    }
+
+    #[test]
+    fn permission_denied_gets_a_clear_message() {
+        let e = NetError::Io {
+            op: "create_tun",
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+        let reason = DisconnectReason::NetworkFailed(std::sync::Arc::new(e));
+        let msg = describe_reason(&reason);
+        assert!(
+            msg.contains("droits insuffisants : lancez avec sudo"),
+            "{msg}"
+        );
+        assert_eq!(from_reason(&reason), Exit::LocalNetwork);
     }
 
     #[test]

@@ -12,7 +12,7 @@ Référence fonctionnelle : openfortivpn (client Linux, C).
 - Ne jamais se connecter à la vraie passerelle VPN de l'entreprise sans demande explicite.
   Les tests utilisent `tools/mock-gw`.
 - Aucun secret (mot de passe, cookie, OTP) dans les logs, les tests ou le dépôt.
-- **Aucun `git commit` / `git push`** sans accord explicite de l'utilisateur. Les sous-agents ne commitent jamais.
+- **Commits / push** : le coordinateur peut commiter et pousser librement sur `jerhome/fortivpn-rs` (dépôt perso public, accord de l'utilisateur du 2026-11-13) après `scripts/check.sh` vert et vérification de l'absence de données perso/employeur. Les sous-agents ne commitent jamais.
   Identité de commit : compte personnel « jerhome » (configurée en local au dépôt), jamais l'identité
   git globale professionnelle.
 

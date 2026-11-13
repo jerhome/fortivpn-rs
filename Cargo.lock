@@ -846,6 +846,7 @@ dependencies = [
  "netlinux",
  "netproxy",
  "netwin",
+ "nix 0.31.3",
  "rpassword",
  "secrecy",
  "serde",

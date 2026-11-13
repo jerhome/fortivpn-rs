@@ -200,6 +200,24 @@ pub enum ConfigError {
     /// Aucun répertoire de configuration utilisateur connu.
     #[error("répertoire de configuration utilisateur introuvable : utilisez --config CHEMIN")]
     NoDefaultPath,
+    /// `SUDO_USER` ne correspond à aucun compte local.
+    #[error("utilisateur « {user} » (SUDO_USER) introuvable : utilisez -c CHEMIN")]
+    SudoUnknownUser { user: String },
+    /// Configuration de l'utilisateur `sudo` absente.
+    #[error(
+        "configuration de l'utilisateur {user} introuvable ({}) : créez-la ou \
+         indiquez un fichier avec -c CHEMIN",
+        path.display()
+    )]
+    SudoMissing { user: String, path: PathBuf },
+    /// Fichier de configuration contrôlable par un tiers : refusé pour un processus root.
+    #[error(
+        "fichier de configuration refusé ({}) : {reason} ; un fichier contrôlable par un \
+         autre utilisateur ne doit pas piloter un processus root (utilisez -c CHEMIN pour \
+         un fichier de confiance)",
+        path.display()
+    )]
+    UnsafeFile { path: PathBuf, reason: String },
     /// Lecture impossible.
     #[error("lecture impossible : {source}")]
     Io {

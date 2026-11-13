@@ -41,7 +41,7 @@ pub enum SslVpnError {
     #[error(transparent)]
     Http(#[from] HttpError),
     /// Identifiants refusés (`ret=0`, 405, `permission_denied`).
-    #[error("authentification refusée")]
+    #[error("identifiants refusés")]
     AuthFailed,
     /// Second facteur exigé (non supporté dans le MVP).
     #[error("authentification à deux facteurs requise (non supportée)")]
@@ -53,8 +53,18 @@ pub enum SslVpnError {
     #[error("challenge d'authentification non supporté")]
     UnsupportedChallenge,
     /// Statut 200 sans cookie.
-    #[error("la passerelle n'a pas fourni de cookie de session")]
+    #[error(
+        "la passerelle n'a pas fourni de cookie de session ; relancez avec -vv et vérifiez le mot de passe et le realm"
+    )]
     NoCookie,
+    /// Host-check exigé.
+    #[error(
+        "contrôle de conformité du poste (host-check) exigé par la passerelle, non pris en charge"
+    )]
+    HostCheckRequired,
+    /// Realm/portail requis.
+    #[error("realm/portail requis : ajoutez `realm = \"...\"` à la configuration")]
+    RealmRequired,
     /// Cookie reçu invalide.
     #[error("cookie de session invalide : {0}")]
     InvalidCookie(#[from] CookieError),

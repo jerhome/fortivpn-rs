@@ -394,7 +394,18 @@ async fn socks_forward_and_clean_shutdown() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         assert!(closed, "écoute SOCKS encore ouverte après l'arrêt");
-        assert!(TcpStream::connect(env.forward).await.is_err());
+        let mut fwd_closed = false;
+        for _ in 0..50 {
+            if TcpStream::connect(env.forward).await.is_err() {
+                fwd_closed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            fwd_closed,
+            "écoute de redirection encore ouverte après l'arrêt"
+        );
         let logout = env.gw.log().for_path("/remote/logout");
         assert!(!logout.is_empty(), "{:?}", env.gw.log().paths());
         env.gw.shutdown().await;

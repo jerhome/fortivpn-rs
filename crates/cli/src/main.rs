@@ -22,7 +22,7 @@ use fortivpn_app::cli::{Cli, Command, ConnectArgs};
 use fortivpn_app::config::{self, Config};
 use fortivpn_app::exit::Exit;
 use fortivpn_app::svc::ClientCommand;
-use fortivpn_app::{exit, logging, platform, read_password, run, svc, transport};
+use fortivpn_app::{exit, logging, platform, read_password, run, sudo, svc, transport};
 
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -85,10 +85,13 @@ fn service_client(cli: &Cli, command: ClientCommand) -> ExitCode {
 
 /// Charge la configuration (`--config` ou chemin par défaut) ; affiche l'erreur.
 fn load_config(cli: &Cli) -> Result<(PathBuf, Config), Exit> {
-    let path = match &cli.config {
-        Some(p) => p.clone(),
-        None => config::default_path().map_err(|e| config_error(&e))?,
-    };
+    let resolved =
+        sudo::resolve(cli.config.as_deref(), &sudo::SystemEnv).map_err(|e| config_error(&e))?;
+    if let Some(info) = resolved.info() {
+        eprintln!("fortivpn : {info} ({})", resolved.path.display());
+    }
+    resolved.verify().map_err(|e| config_error(&e))?;
+    let path = resolved.path;
     match config::load(&path) {
         Ok(c) => Ok((path, c)),
         Err(e) => {
@@ -125,7 +128,11 @@ fn connect(cli: &Cli) -> Exit {
     let backend = match platform::select_backend(config.proxy.as_ref()) {
         Ok(b) => b,
         Err(e) => {
-            tracing::error!("initialisation du réseau impossible : {e}");
+            if exit::is_permission_denied(&e) {
+                tracing::error!("{}", exit::INSUFFICIENT_RIGHTS);
+            } else {
+                tracing::error!("initialisation du réseau impossible : {e}");
+            }
             return exit::from_backend_error(&e);
         }
     };

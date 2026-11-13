@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use fortivpn_app::config::{self, Config};
 use fortivpn_app::platform::{self, AnyBackend};
 use fortivpn_app::run::run_session;
+use fortivpn_app::sudo;
 use fortivpn_app::svc::exchange;
 use fortivpn_app::transport::build_transport;
 use fortivpn_core::{
@@ -28,7 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
 use crate::model::{LogLevel, Mode, ProxyInfo, UiState};
-use crate::settings::{SettingsForm, blank_config};
+use crate::settings::{SettingsForm, blank_config, load_mode, save_mode};
 
 /// Notification du worker vers l'interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,7 @@ pub enum Notice {
 
 /// État partagé entre le worker (écriture) et l'interface (lecture, thread UI).
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // drapeaux indépendants d'état d'interface
 pub struct Shared {
     /// État d'affichage de la connexion.
     pub ui: UiState,
@@ -55,6 +57,12 @@ pub struct Shared {
     pub pending_form: Option<SettingsForm>,
     /// Utilisateur à pousser dans le champ de l'écran principal.
     pub pending_username: Option<String>,
+    /// Mode à pousser dans le sélecteur (dernier mode mémorisé).
+    pub pending_mode: Option<Mode>,
+    /// Le mode Service est utilisable (sonde du service réussie).
+    pub service_available: bool,
+    /// Demande d'ouverture de l'écran Réglages (consommée par le rendu).
+    pub open_settings: bool,
 }
 
 impl Shared {
@@ -62,6 +70,7 @@ impl Shared {
     pub fn new() -> Self {
         Self {
             ui: UiState::new(),
+            service_available: true,
             ..Self::default()
         }
     }
@@ -159,8 +168,12 @@ pub enum Command {
     Disconnect,
     /// Vérifier la présence du service (changement de mode).
     ProbeService,
+    /// Démarrage : sonde du service, dernier mode, première utilisation.
+    Startup,
     /// Relire `config.toml`.
     LoadSettings,
+    /// Épingler l'empreinte proposée après un certificat refusé (action explicite).
+    PinFingerprint,
     /// Valider et enregistrer les réglages.
     SaveSettings(SettingsForm),
     /// Se déconnecter proprement puis quitter.
@@ -285,7 +298,11 @@ impl Worker {
             } => self.connect(mode, &username, password).await,
             Command::Disconnect => self.disconnect(),
             Command::ProbeService => self.probe_service().await,
-            Command::LoadSettings => self.load_settings().await,
+            Command::Startup => self.startup().await,
+            Command::LoadSettings => {
+                self.load_settings().await;
+            }
+            Command::PinFingerprint => self.pin_fingerprint().await,
             Command::SaveSettings(form) => self.save_settings(form).await,
             Command::Quit => {
                 if self.active.is_some() {
@@ -337,14 +354,29 @@ impl Worker {
         }
     }
 
+    /// Chemin de configuration : `--config`, ou le défaut (celui de `SUDO_USER` si
+    /// l'interface a été lancée en root par `sudo`).
+    fn resolved_path(&self) -> Result<sudo::Resolved, String> {
+        let resolved =
+            sudo::resolve(self.path.as_deref(), &sudo::SystemEnv).map_err(|e| e.to_string())?;
+        if let Some(info) = resolved.info() {
+            tracing::info!("{info}");
+        }
+        Ok(resolved)
+    }
+
+    fn config_path(&self) -> Result<PathBuf, String> {
+        self.resolved_path().map(|r| r.path)
+    }
+
     async fn read_config(&self) -> Result<(PathBuf, Option<Config>), String> {
-        let path = match &self.path {
-            Some(p) => p.clone(),
-            None => config::default_path().map_err(|e| e.to_string())?,
-        };
+        let resolved = self.resolved_path()?;
+        let path = resolved.path.clone();
         let p = path.clone();
         let result = tokio::task::spawn_blocking(move || {
             if p.exists() {
+                // Contexte sudo : refuse un fichier contrôlable par un tiers.
+                resolved.verify().map_err(|e| e.to_string())?;
                 config::load(&p)
                     .map(Some)
                     .map_err(|e| format!("{} : {e}", p.display()))
@@ -357,14 +389,78 @@ impl Worker {
         Ok((path, result))
     }
 
-    async fn load_settings(&mut self) {
+    /// Au démarrage : sonde du service, dernier mode, et ouverture directe des
+    /// Réglages si la configuration n'existe pas encore (première utilisation).
+    async fn startup(&mut self) {
+        self.probe_service().await;
+        let mode = self
+            .config_path()
+            .ok()
+            .and_then(|p| load_mode(&p))
+            .unwrap_or_default();
+        let available = self.sink.lock().service_available;
+        let mode = if mode == Mode::Service && !available {
+            Mode::Proxy
+        } else {
+            mode
+        };
+        self.sink.update(|s, _| s.pending_mode = Some(mode));
+        let first_run = self.load_settings().await;
+        if first_run {
+            self.sink.update(|s, _| s.open_settings = true);
+        }
+    }
+
+    /// Épingle l'empreinte proposée (uniquement si aucun certificat n'est épinglé).
+    async fn pin_fingerprint(&mut self) {
+        let offer = self.sink.lock().ui.visible_pin_offer().map(str::to_owned);
+        let Some(fp) = offer else { return };
+        let Ok(fingerprint) = fp.parse::<fortivpn_core::sslvpn::CertFingerprint>() else {
+            return;
+        };
+        let mut config = match self.read_config().await {
+            Ok((_, Some(c))) => c,
+            _ => self.loaded.clone().unwrap_or_else(blank_config),
+        };
+        if !config.trusted_cert.is_empty() {
+            return;
+        }
+        config.trusted_cert = vec![fingerprint];
+        match self.save(config.clone()).await {
+            Ok(path) => {
+                self.sink.update(|s, ts| {
+                    s.ui.pin_offer = None;
+                    s.ui.pin_allowed = false;
+                    s.ui.error = None;
+                    s.pending_form = Some(SettingsForm::from_config(&config));
+                    s.ui.push_log(
+                        ts,
+                        LogLevel::Info,
+                        format!(
+                            "Empreinte épinglée ({}) : réessayez de vous connecter",
+                            path.display()
+                        ),
+                    );
+                });
+                self.loaded = Some(config);
+            }
+            Err(e) => self.sink.update(|s, _| {
+                s.ui.error = Some(format!("Épinglage impossible : {e}"));
+            }),
+        }
+    }
+
+    /// Charge les réglages ; renvoie `true` si le fichier n'existe pas (première
+    /// utilisation). Le formulaire est toujours alimenté (vide en cas d'échec).
+    async fn load_settings(&mut self) -> bool {
         self.sink.update(|s, _| s.busy = true);
         let result = self.read_config().await;
         match result {
             Ok((path, config)) => {
-                let message = if config.is_none() {
+                let first_run = config.is_none();
+                let message = if first_run {
                     format!(
-                        "Aucun fichier de configuration ({}) : renseignez la passerelle puis enregistrez.",
+                        "Première utilisation : renseignez la passerelle. Le fichier {} sera créé à l'enregistrement.",
                         path.display()
                     )
                 } else {
@@ -376,17 +472,26 @@ impl Worker {
                     s.pending_username = Some(c.username.clone());
                     s.ui.host.clone_from(&c.host);
                     s.ui.reconnect_auto = c.reconnect.enabled;
+                    s.ui.pin_allowed = c.trusted_cert.is_empty();
                     s.settings_message = message;
+                    s.settings_ok = first_run;
+                    s.busy = false;
+                });
+                self.loaded = Some(c);
+                first_run
+            }
+            Err(e) => {
+                // Fichier illisible : l'écran Réglages reste utilisable (formulaire vide).
+                let c = blank_config();
+                self.sink.update(|s, _| {
+                    s.pending_form = Some(SettingsForm::from_config(&c));
+                    s.settings_message = format!("Lecture impossible : {e}");
                     s.settings_ok = false;
                     s.busy = false;
                 });
                 self.loaded = Some(c);
+                false
             }
-            Err(e) => self.sink.update(|s, _| {
-                s.settings_message = format!("Lecture impossible : {e}");
-                s.settings_ok = false;
-                s.busy = false;
-            }),
         }
     }
 
@@ -429,10 +534,7 @@ impl Worker {
     }
 
     async fn save(&self, config: Config) -> Result<PathBuf, String> {
-        let path = match &self.path {
-            Some(p) => p.clone(),
-            None => config::default_path().map_err(|e| e.to_string())?,
-        };
+        let path = self.config_path()?;
         let p = path.clone();
         tokio::task::spawn_blocking(move || config.save(&p).map_err(|e| e.to_string()))
             .await
@@ -441,13 +543,20 @@ impl Worker {
     }
 
     async fn probe_service(&mut self) {
-        let hint = match tokio::time::timeout(PROBE_TIMEOUT, exchange(&Request::Status {})).await {
-            Ok(Ok(Response::Ok { .. })) => String::new(),
-            Ok(Ok(Response::Error { message, .. })) => format!("Service : {message}"),
-            Ok(Err(e)) => service_unavailable(&e),
-            Err(_) => service_unavailable("délai dépassé"),
-        };
-        self.sink.update(|s, _| s.ui.service_hint = hint);
+        let (available, hint) =
+            match tokio::time::timeout(PROBE_TIMEOUT, exchange(&Request::Status {})).await {
+                Ok(Ok(Response::Ok { .. })) => (true, String::new()),
+                Ok(Ok(Response::Error { message, .. })) => (true, format!("Service : {message}")),
+                Ok(Err(e)) => {
+                    tracing::debug!("sonde du service : {e}");
+                    (false, SERVICE_ABSENT.to_owned())
+                }
+                Err(_) => (false, SERVICE_ABSENT.to_owned()),
+            };
+        self.sink.update(|s, _| {
+            s.service_available = available;
+            s.ui.service_hint = hint;
+        });
     }
 
     async fn connect(&mut self, mode: Mode, username: &str, password: SecretString) {
@@ -474,6 +583,13 @@ impl Worker {
             username.trim().clone_into(&mut config.username);
         }
         self.loaded = Some(config.clone());
+        let pin_allowed = config.trusted_cert.is_empty();
+        self.sink.update(|s, _| s.ui.pin_allowed = pin_allowed);
+        if let Ok(path) = self.config_path() {
+            if let Err(e) = save_mode(&path, mode) {
+                tracing::debug!("mode non mémorisé : {e}");
+            }
+        }
 
         self.next_id += 1;
         let id = self.next_id;
@@ -519,6 +635,8 @@ impl Worker {
     }
 }
 
+/// Explication affichée quand le mode Service est grisé.
+pub const SERVICE_ABSENT: &str = "Service non installé — demandez à votre administrateur.";
 /// Délai de la sonde du service.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Période d'interrogation de l'état du service.
@@ -786,7 +904,7 @@ mod tests {
         }
         let form = {
             let mut g = sink.lock();
-            assert!(g.settings_message.contains("Aucun fichier"));
+            assert!(g.settings_message.contains("Première utilisation"));
             g.pending_form.take().unwrap()
         };
         let form = SettingsForm {
@@ -796,7 +914,7 @@ mod tests {
         };
         handle.send(Command::SaveSettings(form));
         for _ in 0..200 {
-            if sink.lock().settings_ok {
+            if sink.lock().settings_message == "Réglages enregistrés." {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;

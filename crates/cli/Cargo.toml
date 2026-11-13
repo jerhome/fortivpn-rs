@@ -37,6 +37,7 @@ zeroize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 netlinux = { path = "../netlinux" }
+nix = { workspace = true, features = ["user"] }
 
 [target.'cfg(windows)'.dependencies]
 netwin = { path = "../netwin" }

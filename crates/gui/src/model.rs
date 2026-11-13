@@ -195,6 +195,27 @@ impl Marks {
     }
 }
 
+/// Extrait l'empreinte d'un refus de certificat dans la chaîne de causes de l'erreur
+/// (texte `... sha256 : <64 hex>` ou `sha256=<64 hex>`).
+pub fn untrusted_fingerprint(err: &(dyn std::error::Error + 'static)) -> Option<String> {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = cur {
+        if let Some(fp) = fingerprint_in(&e.to_string()) {
+            return Some(fp);
+        }
+        cur = e.source();
+    }
+    None
+}
+
+fn fingerprint_in(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase().replace("sha-256", "sha256");
+    let at = lower.find("sha256")? + "sha256".len();
+    let rest = lower[at..].trim_start_matches([' ', ':', '=']);
+    let hex: String = rest.chars().take(64).collect();
+    (hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())).then_some(hex)
+}
+
 /// État complet de l'interface.
 #[derive(Debug, Clone, Default)]
 pub struct UiState {
@@ -216,6 +237,8 @@ pub struct UiState {
     pub error: Option<String>,
     /// Indication sur le service (installé ou non).
     pub service_hint: String,
+    /// Avertissement permanent (interface lancée en root).
+    pub root_warning: String,
     /// Mode de la session courante ou choisi.
     pub mode: Mode,
     /// Passerelle affichée (`hôte`).
@@ -224,6 +247,11 @@ pub struct UiState {
     pub log: VecDeque<LogLine>,
     /// Second facteur demandé (boîte de dialogue ouverte).
     pub second_factor: Option<SecondFactorPrompt>,
+    /// Empreinte du certificat refusé lors de la dernière tentative (jamais épinglée
+    /// automatiquement : l'utilisateur doit la confirmer).
+    pub pin_offer: Option<String>,
+    /// La configuration n'a aucun certificat épinglé : l'épinglage peut être proposé.
+    pub pin_allowed: bool,
 }
 
 impl UiState {
@@ -257,6 +285,7 @@ impl UiState {
         self.address = None;
         self.connected_since = None;
         self.error = None;
+        self.pin_offer = None;
         self.detail.clear();
         let target = match mode {
             Mode::Proxy => "mode proxy",
@@ -394,10 +423,23 @@ impl UiState {
             self.error = None;
             self.push_log(ts, LogLevel::Info, "Connexion annulée");
         } else {
-            let text = describe_reason(reason);
+            let mut text = describe_reason(reason);
+            if let DisconnectReason::ConnectFailed(e) = reason {
+                if let Some(fp) = untrusted_fingerprint(&**e) {
+                    text = format!(
+                        "Certificat de la passerelle non reconnu. Empreinte SHA-256 : {fp}"
+                    );
+                    self.pin_offer = Some(fp);
+                }
+            }
             self.push_log(ts, LogLevel::Err, format!("Déconnecté : {text}"));
             self.error = Some(text);
         }
+    }
+
+    /// Empreinte à proposer d'épingler (certificat refusé et aucun certificat épinglé).
+    pub fn visible_pin_offer(&self) -> Option<&str> {
+        self.pin_offer.as_deref().filter(|_| self.pin_allowed)
     }
 
     /// Applique un état rapporté par le service (mode service).
@@ -777,6 +819,33 @@ mod tests {
         assert!(s.second_factor.is_none());
         assert!(s.error.is_none(), "l'annulation n'est pas une erreur");
         assert_eq!(s.log.back().unwrap().text, "Connexion annulée");
+    }
+
+    #[test]
+    fn untrusted_certificate_offers_the_fingerprint() {
+        const FP: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let io = std::io::Error::other(format!("certificat refusé (inconnu), sha256={FP}"));
+        let err = TransportError::Io(io);
+        assert_eq!(untrusted_fingerprint(&err).as_deref(), Some(FP));
+        assert!(untrusted_fingerprint(&TransportError::AuthFailed).is_none());
+
+        let mut s = started();
+        s.pin_allowed = true;
+        s.finish(
+            &DisconnectReason::ConnectFailed(Arc::new(TransportError::Io(std::io::Error::other(
+                format!("refusé ; empreinte SHA-256 : {}", FP.to_uppercase()),
+            )))),
+            "t",
+        );
+        assert_eq!(s.visible_pin_offer(), Some(FP));
+        assert!(s.error.as_deref().unwrap().contains(FP));
+        s.pin_allowed = false;
+        assert!(
+            s.visible_pin_offer().is_none(),
+            "déjà épinglé : pas d'offre"
+        );
+        s.begin(Mode::Proxy, "h", ProxyInfo::default(), "t");
+        assert!(s.pin_offer.is_none());
     }
 
     #[test]
