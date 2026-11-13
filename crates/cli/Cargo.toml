@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[lib]
+name = "fortivpn_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "fortivpn"
 path = "src/main.rs"

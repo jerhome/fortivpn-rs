@@ -22,6 +22,9 @@
 //! tunnel est exposé par un proxy SOCKS5 et des redirections de ports locales
 //! (crate `netproxy`), utilisables sans droits d'administration.
 //!
+//! Section optionnelle `[reconnect]` : `enabled` (défaut `true`), `max_backoff_secs`
+//! (1..=600, défaut 60), `max_attempts` (>= 1, défaut illimité).
+//!
 //! **Aucun secret** : la présence d'une clé de type mot de passe / OTP / cookie, à
 //! n'importe quel niveau, est une erreur. Le mot de passe est demandé à chaque
 //! connexion. Les erreurs de syntaxe sont rapportées sans recopier la ligne fautive
@@ -29,20 +32,23 @@
 
 use std::fmt::{self, Write as _};
 use std::net::Ipv6Addr;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 use fortivpn_core::sslvpn::CertFingerprint;
+use fortivpn_core::{ReconnectPolicy, SessionOptions};
 use serde::Deserialize;
 
 /// Port HTTPS par défaut de la passerelle.
-pub(crate) const DEFAULT_PORT: u16 = 443;
+pub const DEFAULT_PORT: u16 = 443;
 /// Nom d'interface TUN par défaut.
-pub(crate) const DEFAULT_INTERFACE: &str = "fortivpn";
+pub const DEFAULT_INTERFACE: &str = "fortivpn";
 /// Répertoire de l'application sous le répertoire de configuration de l'utilisateur.
-pub(crate) const APP_DIR: &str = "fortivpn-rs";
+pub const APP_DIR: &str = "fortivpn-rs";
 /// Nom du fichier de configuration.
-pub(crate) const CONFIG_FILE: &str = "config.toml";
+pub const CONFIG_FILE: &str = "config.toml";
 /// Taille maximale acceptée du fichier.
 const MAX_FILE_SIZE: u64 = 64 * 1024;
 /// Longueur maximale du nom d'interface (`IFNAMSIZ - 1` sous Linux).
@@ -60,7 +66,7 @@ const SECRET_KEYS: &[&str] = &[
 
 /// Niveau de journalisation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum LogLevel {
+pub enum LogLevel {
     Error,
     Warn,
     Info,
@@ -70,7 +76,8 @@ pub(crate) enum LogLevel {
 
 impl LogLevel {
     /// Niveau relevé de `steps` crans (`-v`, `-vv`…), plafonné à `Trace`.
-    pub(crate) fn raised(self, steps: u8) -> Self {
+    #[must_use]
+    pub fn raised(self, steps: u8) -> Self {
         const ORDER: [LogLevel; 5] = [
             LogLevel::Error,
             LogLevel::Warn,
@@ -116,30 +123,80 @@ impl FromStr for LogLevel {
 
 /// Configuration validée. Ne contient aucun secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Config {
+pub struct Config {
     /// Nom d'hôte ou adresse IP de la passerelle.
-    pub(crate) host: String,
+    pub host: String,
     /// Port TCP de la passerelle.
-    pub(crate) port: u16,
+    pub port: u16,
     /// Nom d'utilisateur.
-    pub(crate) username: String,
+    pub username: String,
     /// Realm éventuel.
-    pub(crate) realm: Option<String>,
+    pub realm: Option<String>,
     /// Empreintes SHA-256 épinglées du certificat de la passerelle (vide : aucune ;
     /// plusieurs : rotation de certificat sans indisponibilité).
-    pub(crate) trusted_cert: Vec<CertFingerprint>,
+    pub trusted_cert: Vec<CertFingerprint>,
     /// Nom de l'interface TUN.
-    pub(crate) interface: String,
+    pub interface: String,
     /// Niveau de journalisation configuré (avant `-v`).
-    pub(crate) log_level: LogLevel,
+    pub log_level: LogLevel,
     /// Mode proxy en espace utilisateur (section `[proxy]`), à la place du
     /// backend réseau du système.
-    pub(crate) proxy: Option<netproxy::ProxyConfig>,
+    pub proxy: Option<netproxy::ProxyConfig>,
+    /// Reconnexion automatique (section `[reconnect]`).
+    pub reconnect: ReconnectConfig,
+}
+
+/// Réglages de la section `[reconnect]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReconnectConfig {
+    /// Reconnexion activée (défaut : oui).
+    pub enabled: bool,
+    /// Délai maximal entre deux essais, en secondes (1..=600, défaut 60).
+    pub max_backoff_secs: u32,
+    /// Nombre maximal d'essais consécutifs (`None` : illimité).
+    pub max_attempts: Option<NonZeroU32>,
+}
+
+impl Default for ReconnectConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_backoff_secs: 60,
+            max_attempts: None,
+        }
+    }
+}
+
+impl ReconnectConfig {
+    /// Politique `core` correspondante.
+    pub fn policy(self) -> ReconnectPolicy {
+        if !self.enabled {
+            return ReconnectPolicy::disabled();
+        }
+        let mut p = ReconnectPolicy::default();
+        p.max_delay = Duration::from_secs(u64::from(self.max_backoff_secs));
+        p.initial_delay = p.initial_delay.min(p.max_delay);
+        p.max_attempts = self.max_attempts;
+        p
+    }
+
+    fn render(self) -> String {
+        if !self.enabled {
+            return "reconnexion : désactivée\n".to_owned();
+        }
+        let attempts = self
+            .max_attempts
+            .map_or_else(|| "illimité".to_owned(), |n| n.to_string());
+        format!(
+            "reconnexion : activée (délai max {} s, essais max {attempts})\n",
+            self.max_backoff_secs
+        )
+    }
 }
 
 /// Erreur de configuration.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ConfigError {
+pub enum ConfigError {
     /// Aucun répertoire de configuration utilisateur connu.
     #[error("répertoire de configuration utilisateur introuvable : utilisez --config CHEMIN")]
     NoDefaultPath,
@@ -172,7 +229,7 @@ pub(crate) enum ConfigError {
 
 /// Position d'une erreur de syntaxe (ligne, colonne ; 1-based).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct Location(Option<(usize, usize)>);
+pub struct Location(Option<(usize, usize)>);
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -215,6 +272,16 @@ struct RawConfig {
     interface: Option<String>,
     log_level: Option<String>,
     proxy: Option<RawProxy>,
+    reconnect: Option<RawReconnect>,
+}
+
+/// Section `[reconnect]` brute.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawReconnect {
+    enabled: Option<bool>,
+    max_backoff_secs: Option<i64>,
+    max_attempts: Option<i64>,
 }
 
 /// Section `[proxy]` brute.
@@ -229,19 +296,19 @@ struct RawProxy {
 /// Chemin par défaut : `<config utilisateur>/fortivpn-rs/config.toml`
 /// (`%APPDATA%\fortivpn-rs\config.toml` sous Windows,
 /// `$XDG_CONFIG_HOME` ou `~/.config/fortivpn-rs/config.toml` sous Linux).
-pub(crate) fn default_path() -> Result<PathBuf, ConfigError> {
+pub fn default_path() -> Result<PathBuf, ConfigError> {
     dirs::config_dir()
         .map(|base| default_path_in(&base))
         .ok_or(ConfigError::NoDefaultPath)
 }
 
 /// Chemin par défaut sous un répertoire de configuration donné.
-pub(crate) fn default_path_in(config_dir: &Path) -> PathBuf {
+pub fn default_path_in(config_dir: &Path) -> PathBuf {
     config_dir.join(APP_DIR).join(CONFIG_FILE)
 }
 
 /// Lit et valide le fichier.
-pub(crate) fn load(path: &Path) -> Result<Config, ConfigError> {
+pub fn load(path: &Path) -> Result<Config, ConfigError> {
     let io_err = |source| ConfigError::Io {
         path: path.to_path_buf(),
         source,
@@ -257,7 +324,7 @@ pub(crate) fn load(path: &Path) -> Result<Config, ConfigError> {
 }
 
 /// Analyse et valide un texte TOML.
-pub(crate) fn parse(text: &str) -> Result<Config, ConfigError> {
+pub fn parse(text: &str) -> Result<Config, ConfigError> {
     let table: toml::Table = toml::from_str(text).map_err(|e| ConfigError::Syntax {
         location: e
             .span()
@@ -335,6 +402,12 @@ fn validate(raw: RawConfig) -> Result<Config, ConfigError> {
         })?,
     };
     let proxy = raw.proxy.map(validate_proxy).transpose()?;
+    let reconnect = raw
+        .reconnect
+        .as_ref()
+        .map(validate_reconnect)
+        .transpose()?
+        .unwrap_or_default();
     Ok(Config {
         host: raw.host,
         port,
@@ -344,6 +417,37 @@ fn validate(raw: RawConfig) -> Result<Config, ConfigError> {
         interface,
         log_level,
         proxy,
+        reconnect,
+    })
+}
+
+fn validate_reconnect(raw: &RawReconnect) -> Result<ReconnectConfig, ConfigError> {
+    let d = ReconnectConfig::default();
+    let max_backoff_secs = match raw.max_backoff_secs {
+        None => d.max_backoff_secs,
+        Some(v) => u32::try_from(v)
+            .ok()
+            .filter(|s| (1..=600).contains(s))
+            .ok_or_else(|| invalid("reconnect.max_backoff_secs", format!("{v} hors de 1..=600")))?,
+    };
+    let max_attempts = match raw.max_attempts {
+        None => None,
+        Some(v) => Some(
+            u32::try_from(v)
+                .ok()
+                .and_then(NonZeroU32::new)
+                .ok_or_else(|| {
+                    invalid(
+                        "reconnect.max_attempts",
+                        format!("{v} : entier >= 1 attendu"),
+                    )
+                })?,
+        ),
+    };
+    Ok(ReconnectConfig {
+        enabled: raw.enabled.unwrap_or(d.enabled),
+        max_backoff_secs,
+        max_attempts,
     })
 }
 
@@ -456,6 +560,24 @@ fn parse_fingerprint(s: &str) -> Result<CertFingerprint, ConfigError> {
         .map_err(|e: fortivpn_core::sslvpn::InvalidFingerprint| invalid(FIELD, e.to_string()))
 }
 
+/// Chaîne TOML de base, échappée.
+fn toml_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{:04x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn validate_interface(name: &str) -> Result<(), ConfigError> {
     const FIELD: &str = "interface";
     if name.is_empty() || name.len() > MAX_INTERFACE_LEN {
@@ -474,6 +596,91 @@ fn validate_interface(name: &str) -> Result<(), ConfigError> {
 }
 
 impl Config {
+    /// Options de session : interface et politique de reconnexion.
+    pub fn session_options(&self) -> SessionOptions {
+        SessionOptions::new(self.interface.clone()).with_reconnect(self.reconnect.policy())
+    }
+
+    /// Sérialise la configuration en TOML (relisible par [`parse`]). Ne contient
+    /// aucun secret : la structure n'en porte pas.
+    pub fn to_toml(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(out, "host = {}", toml_string(&self.host));
+        if self.port != DEFAULT_PORT {
+            let _ = writeln!(out, "port = {}", self.port);
+        }
+        let _ = writeln!(out, "username = {}", toml_string(&self.username));
+        if let Some(realm) = &self.realm {
+            let _ = writeln!(out, "realm = {}", toml_string(realm));
+        }
+        match self.trusted_cert.as_slice() {
+            [] => {}
+            [one] => {
+                let _ = writeln!(out, "trusted_cert = \"{}\"", one.to_hex());
+            }
+            many => {
+                let list: Vec<String> =
+                    many.iter().map(|f| format!("\"{}\"", f.to_hex())).collect();
+                let _ = writeln!(out, "trusted_cert = [{}]", list.join(", "));
+            }
+        }
+        if self.interface != DEFAULT_INTERFACE {
+            let _ = writeln!(out, "interface = {}", toml_string(&self.interface));
+        }
+        if self.log_level != LogLevel::Info {
+            let _ = writeln!(out, "log_level = \"{}\"", self.log_level);
+        }
+        if let Some(p) = &self.proxy {
+            out.push_str("\n[proxy]\n");
+            match p.socks {
+                Some(a) if a == netproxy::DEFAULT_SOCKS => {}
+                Some(a) => {
+                    let _ = writeln!(out, "socks = \"{a}\"");
+                }
+                None => out.push_str("socks = \"off\"\n"),
+            }
+            if !p.forwards.is_empty() {
+                let list: Vec<String> = p
+                    .forwards
+                    .iter()
+                    .map(|f| format!("\"{}={}\"", f.listen, f.target))
+                    .collect();
+                let _ = writeln!(out, "forward = [{}]", list.join(", "));
+            }
+            if p.allow_non_loopback {
+                out.push_str("allow_non_loopback = true\n");
+            }
+        }
+        if self.reconnect != ReconnectConfig::default() {
+            out.push_str("\n[reconnect]\n");
+            let _ = writeln!(out, "enabled = {}", self.reconnect.enabled);
+            let _ = writeln!(
+                out,
+                "max_backoff_secs = {}",
+                self.reconnect.max_backoff_secs
+            );
+            if let Some(n) = self.reconnect.max_attempts {
+                let _ = writeln!(out, "max_attempts = {n}");
+            }
+        }
+        out
+    }
+
+    /// Écrit la configuration dans `path` (création du dossier, écriture dans un
+    /// fichier temporaire voisin puis renommage : jamais de fichier tronqué).
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        let io_err = |source| ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(io_err)?;
+        }
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, self.to_toml()).map_err(io_err)?;
+        std::fs::rename(&tmp, path).map_err(io_err)
+    }
+
     fn render_proxy(&self) -> String {
         let Some(p) = &self.proxy else {
             return "mode : système (interface TUN, routes, DNS ; droits administrateur)\n"
@@ -496,7 +703,7 @@ impl Config {
     }
 
     /// Rendu lisible pour `check-config` (ne contient aucun secret).
-    pub(crate) fn render(&self, path: &Path) -> String {
+    pub fn render(&self, path: &Path) -> String {
         let realm = self.realm.as_deref().unwrap_or("(aucun)");
         let cert = if self.trusted_cert.is_empty() {
             "(aucun : validation par les autorités de certification du système)".to_owned()
@@ -517,6 +724,7 @@ impl Config {
              \x20 interface    = {iface}\n\
              \x20 log_level    = {level}\n\
              {proxy}\
+             {reconnect}\
              mot de passe : demandé à chaque connexion, jamais stocké\n",
             path = path.display(),
             host = self.host,
@@ -525,6 +733,7 @@ impl Config {
             iface = self.interface,
             level = self.log_level,
             proxy = self.render_proxy(),
+            reconnect = self.reconnect.render(),
         )
     }
 }
@@ -800,6 +1009,56 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_section() {
+        let c = parse(&full()).unwrap();
+        assert_eq!(c.reconnect, ReconnectConfig::default());
+        let p = c.session_options().reconnect;
+        assert!(p.enabled);
+        assert_eq!(p.max_delay, Duration::from_secs(60));
+        assert!(
+            c.render(Path::new("x"))
+                .contains("reconnexion : activée (délai max 60 s")
+        );
+
+        let c = parse(&format!(
+            "{}[reconnect]\nmax_backoff_secs = 5\nmax_attempts = 3\n",
+            full()
+        ))
+        .unwrap();
+        let p = c.session_options().reconnect;
+        assert!(p.enabled);
+        assert_eq!(p.max_delay, Duration::from_secs(5));
+        assert_eq!(p.max_attempts.map(NonZeroU32::get), Some(3));
+        let out = c.render(Path::new("x"));
+        assert!(out.contains("délai max 5 s, essais max 3"), "{out}");
+
+        let c = parse(&format!("{}[reconnect]\nenabled = false\n", full())).unwrap();
+        assert!(!c.session_options().reconnect.enabled);
+        assert!(
+            c.render(Path::new("x"))
+                .contains("reconnexion : désactivée")
+        );
+    }
+
+    #[test]
+    fn invalid_reconnect_section() {
+        for (body, field) in [
+            ("max_backoff_secs = 0", "reconnect.max_backoff_secs"),
+            ("max_backoff_secs = 601", "reconnect.max_backoff_secs"),
+            ("max_backoff_secs = -1", "reconnect.max_backoff_secs"),
+            ("max_attempts = 0", "reconnect.max_attempts"),
+            ("max_attempts = -2", "reconnect.max_attempts"),
+        ] {
+            assert_eq!(
+                err_field(&format!("{}[reconnect]\n{body}\n", full())),
+                field
+            );
+        }
+        assert!(parse(&format!("{}[reconnect]\nfoo = 1\n", full())).is_err());
+        assert!(parse(&format!("{}[reconnect]\nmax_backoff_secs = 600\n", full())).is_ok());
+    }
+
+    #[test]
     fn log_level_raise() {
         assert_eq!(LogLevel::Info.raised(0), LogLevel::Info);
         assert_eq!(LogLevel::Info.raised(1), LogLevel::Debug);
@@ -822,5 +1081,34 @@ mod tests {
         ] {
             assert!(out.contains(needle), "{needle} absent de {out}");
         }
+    }
+
+    #[test]
+    fn to_toml_round_trips() {
+        let text = format!(
+            "{}[proxy]\nsocks = \"127.0.0.1:1081\"\nforward = [\"127.0.0.1:2222=10.0.0.10:22\"]\n\
+             [reconnect]\nenabled = false\n",
+            full()
+        );
+        let c = parse(&text).unwrap();
+        let back = parse(&c.to_toml()).unwrap();
+        assert_eq!(c, back);
+        let minimal = parse("host = \"h\"\nusername = \"u\"\n").unwrap();
+        assert_eq!(parse(&minimal.to_toml()).unwrap(), minimal);
+        let odd = Config {
+            username: "a\"b\\c".into(),
+            ..minimal
+        };
+        assert_eq!(parse(&odd.to_toml()).unwrap(), odd);
+    }
+
+    #[test]
+    fn save_writes_a_loadable_file() {
+        let dir = std::env::temp_dir().join(format!("fortivpn-cfg-{}", std::process::id()));
+        let path = dir.join("sub").join("config.toml");
+        let c = parse(&full()).unwrap();
+        c.save(&path).unwrap();
+        assert_eq!(load(&path).unwrap(), c);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -160,10 +160,7 @@ impl InstanceLock {
             .open(&path)
             .map_err(|e| {
                 if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) {
-                    NetError::Os {
-                        op: "instance_lock",
-                        reason: "une autre instance de fortivpn-rs est déjà active".into(),
-                    }
+                    NetError::AlreadyRunning
                 } else {
                     NetError::Os {
                         op: "instance_lock",

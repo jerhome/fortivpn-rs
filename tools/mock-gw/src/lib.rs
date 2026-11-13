@@ -137,6 +137,7 @@ pub(crate) struct Options {
     pub(crate) login_failure: LoginFailure,
     pub(crate) expired_session: ExpiredSession,
     pub(crate) scenario: Scenario,
+    pub(crate) otp: Option<Zeroizing<String>>,
     pub(crate) fixed_cookie: Option<Zeroizing<String>>,
     pub(crate) io_timeout: Duration,
 }
@@ -182,6 +183,7 @@ impl Default for MockGatewayBuilder {
                 login_failure: LoginFailure::default(),
                 expired_session: ExpiredSession::default(),
                 scenario: Scenario::default(),
+                otp: None,
                 fixed_cookie: None,
                 io_timeout: Duration::from_secs(30),
             },
@@ -241,6 +243,16 @@ impl MockGatewayBuilder {
     #[must_use]
     pub fn scenario(mut self, scenario: Scenario) -> Self {
         self.opts.scenario = scenario;
+        self
+    }
+
+    /// Code OTP accepté par [`Scenario::SecondFactorRequired`] : le 2e `logincheck`
+    /// (`reqid`/`magic` du vecteur, `code=<otp>` ou `ftmpush=1`) est alors accepté (cookie
+    /// émis) ; tout autre code donne `ret=0`. Sans OTP configuré, le scénario refuse
+    /// tout 2e `logincheck` (comportement historique : pas de 2FA possible).
+    #[must_use]
+    pub fn otp(mut self, code: impl Into<String>) -> Self {
+        self.opts.otp = Some(Zeroizing::new(code.into()));
         self
     }
 

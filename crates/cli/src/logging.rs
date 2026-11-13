@@ -35,7 +35,7 @@ fn level_filter(level: LogLevel) -> LevelFilter {
 
 /// Filtre : projet au niveau `level`, dépendances en `WARN` (ou moins si `level`
 /// est plus strict).
-pub(crate) fn filter(level: LogLevel) -> Targets {
+pub fn filter(level: LogLevel) -> Targets {
     let project = level_filter(level);
     Targets::new()
         .with_default(project.min(LevelFilter::WARN))
@@ -43,7 +43,7 @@ pub(crate) fn filter(level: LogLevel) -> Targets {
 }
 
 /// Installe l'abonné global (une seule fois ; sans effet ensuite).
-pub(crate) fn init(level: LogLevel) {
+pub fn init(level: LogLevel) {
     // Couleurs seulement sur un terminal Unix (la console Windows classique ne
     // les interprète pas sans activation explicite).
     let ansi = cfg!(unix) && std::io::stderr().is_terminal();
@@ -59,7 +59,7 @@ pub(crate) fn init(level: LogLevel) {
 
 /// Installe l'abonné global écrivant dans `file` (service Windows : pas de console).
 #[cfg(windows)]
-pub(crate) fn init_to_file(level: LogLevel, file: std::fs::File) {
+pub fn init_to_file(level: LogLevel, file: std::fs::File) {
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::sync::Mutex::new(file))
         .with_ansi(false)

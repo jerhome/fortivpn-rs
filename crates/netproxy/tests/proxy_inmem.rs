@@ -351,6 +351,6 @@ fn non_loopback_and_busy_port_refused() {
     let taken = first.socks_addr().unwrap();
     assert!(matches!(
         ProxyBackend::new(ProxyConfig::new(Some(taken), vec![])),
-        Err(netproxy::ProxyError::Bind { .. })
+        Err(netproxy::ProxyError::AddrInUse { .. })
     ));
 }

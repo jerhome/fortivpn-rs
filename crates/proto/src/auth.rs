@@ -77,7 +77,46 @@ impl fmt::Debug for SessionCookie {
     }
 }
 
-/// Type de second facteur demandé par la passerelle (non supporté dans le MVP).
+/// Valeur de `tokeninfo` désignant une notification push FortiToken Mobile.
+pub const TOKENINFO_FTM_PUSH: &str = "ftm_push";
+
+/// Champs de la réponse `ret=2` à renvoyer tels quels dans la 2e requête `logincheck`
+/// (§13). Valeurs fournies par la passerelle (non secrètes), vides si absentes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChallengeState {
+    /// `reqid`.
+    pub reqid: String,
+    /// `polid`.
+    pub polid: String,
+    /// `grp`.
+    pub grp: String,
+    /// `portal`.
+    pub portal: String,
+    /// `peer`.
+    pub peer: String,
+    /// `magic`.
+    pub magic: String,
+}
+
+impl ChallengeState {
+    fn from_body(body: &[u8]) -> Self {
+        let get = |k: &[u8]| {
+            token_value(body, k)
+                .map(|v| String::from_utf8_lossy(v).into_owned())
+                .unwrap_or_default()
+        };
+        Self {
+            reqid: get(b"reqid="),
+            polid: get(b"polid="),
+            grp: get(b"grp="),
+            portal: get(b"portal="),
+            peer: get(b"peer="),
+            magic: get(b"magic="),
+        }
+    }
+}
+
+/// Type de second facteur demandé par la passerelle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SecondFactor {
@@ -87,6 +126,8 @@ pub enum SecondFactor {
         tokeninfo: String,
         /// Message de challenge (`chal_msg`), s'il est présent.
         challenge: Option<String>,
+        /// Champs à renvoyer dans la 2e requête.
+        state: ChallengeState,
     },
     /// Statut 401 avec formulaire HTML d'OTP (§4.3 étape 2).
     HtmlForm,
@@ -193,6 +234,7 @@ pub fn interpret_logincheck(response: &HttpResponse) -> AuthOutcome {
         return AuthOutcome::TwoFactorRequired(SecondFactor::TokenInfo {
             tokeninfo: String::from_utf8_lossy(t).into_owned(),
             challenge,
+            state: ChallengeState::from_body(response.body()),
         });
     }
     AuthOutcome::NoCookie
@@ -253,7 +295,14 @@ mod tests {
             AuthOutcome::TwoFactorRequired(SecondFactor::TokenInfo {
                 tokeninfo,
                 challenge,
+                state,
             }) => {
+                assert_eq!(state.reqid, "12345678");
+                assert_eq!(state.polid, "1-1-87654321");
+                assert_eq!(state.grp, "staff-grp");
+                assert_eq!(state.portal, "full-access");
+                assert_eq!(state.magic, "1-23456789");
+                assert_eq!(state.peer, "");
                 assert_eq!(tokeninfo, "");
                 assert_eq!(challenge.as_deref(), Some("Please enter your token code"));
             }

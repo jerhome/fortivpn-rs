@@ -1,0 +1,862 @@
+// Interface fortivpn-rs, d'après docs/gui/maquette.html (thème sombre, ~420x640).
+// Aucun état métier ici : tout vient de `UiState` (src/model.rs) via les propriétés.
+
+import { AboutSlint } from "std-widgets.slint";
+
+export global Theme {
+    out property <color> bg: #0b0c10;
+    out property <color> bg-win: #111218;
+    out property <color> card: #181a22;
+    out property <color> card-2: #1f212c;
+    out property <color> border: #2a2d3a;
+    out property <color> text: #e8e9f0;
+    out property <color> muted: #8b8fa3;
+    out property <color> accent: #7c6cff;
+    out property <color> accent-2: #5b8cff;
+    out property <brush> accent-grad: @linear-gradient(135deg, #5b8cff, #8b5cf6);
+    out property <color> ok: #3ddc97;
+    out property <color> warn: #ffb454;
+    out property <color> err: #ff6b6b;
+    out property <color> idle: #6b7080;
+    out property <length> radius: 12px;
+    out property <length> radius-s: 8px;
+    out property <string> font: "Segoe UI Variable";
+    out property <string> mono: "Cascadia Mono";
+}
+
+// Icônes de la maquette (viewBox 24x24, traits arrondis).
+export global Icons {
+    out property <string> shield: "M12 3 L20 6 V12 C20 16.5 16.8 20 12 21 C7.2 20 4 16.5 4 12 V6 Z";
+    out property <string> check: "M5 12.5 L9.5 17 L19 7.5";
+    out property <string> lock: "M7 11 H17 A2 2 0 0 1 19 13 V18 A2 2 0 0 1 17 20 H7 A2 2 0 0 1 5 18 V13 A2 2 0 0 1 7 11 Z M8 11 V8 A4 4 0 0 1 16 8 V11";
+    out property <string> refresh: "M20 11 A8 8 0 1 0 17.7 16.7 M20 5 V11 H14";
+    out property <string> gear: "M12 9 A3 3 0 1 0 12 15 A3 3 0 1 0 12 9 Z M12 2 V5 M12 19 V22 M2 12 H5 M19 12 H22 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M4.9 19.1 L7 17 M17 7 L19.1 4.9";
+    out property <string> arrow-up: "M12 19 V5 M6 11 L12 5 L18 11";
+    out property <string> arrow-down: "M12 5 V19 M6 13 L12 19 L18 13";
+    out property <string> spin: "M12 3 A9 9 0 0 1 21 12";
+    out property <string> back: "M15 5 L8 12 L15 19";
+}
+
+export struct StepItem { label: string, state: int, time: string }
+export struct RedirItem { listen: string, target: string }
+export struct LogItem { ts: string, level: int, text: string }
+
+component Glyph inherits Path {
+    in property <string> d;
+    in property <length> size: 18px;
+    width: size;
+    height: size;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    commands: d;
+    stroke-width: 1.8px;
+    stroke-line-cap: round;
+    fill: transparent;
+}
+
+component Card inherits Rectangle {
+    background: Theme.card;
+    border-color: Theme.border;
+    border-width: 1px;
+    border-radius: Theme.radius;
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 14px;
+        padding-bottom: 14px;
+        spacing: 10px;
+        @children
+    }
+}
+
+component Label inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    font-family: Theme.font;
+}
+
+component Field inherits VerticalLayout {
+    in property <string> label;
+    in-out property <string> text;
+    in property <bool> password;
+    in property <bool> mono;
+    in property <string> placeholder;
+    callback accepted;
+    spacing: 4px;
+    Label { text: root.label; }
+    Rectangle {
+        height: 38px;
+        background: Theme.bg;
+        border-radius: Theme.radius-s;
+        border-width: input.has-focus ? 2px : 1px;
+        border-color: input.has-focus ? Theme.accent : Theme.border;
+        clip: true;
+        input := TextInput {
+            x: 11px;
+            y: (parent.height - self.height) / 2;
+            width: parent.width - 22px;
+            text <=> root.text;
+            input-type: root.password ? InputType.password : InputType.text;
+            color: Theme.text;
+            font-size: root.mono ? 12.5px : 14px;
+            font-family: root.mono ? Theme.mono : Theme.font;
+            selection-background-color: Theme.accent;
+            accepted => { root.accepted(); }
+        }
+        if input.text == "" && root.placeholder != "": Text {
+            x: 11px;
+            y: (parent.height - self.height) / 2;
+            text: root.placeholder;
+            color: Theme.idle;
+            font-size: 14px;
+            font-family: Theme.font;
+        }
+    }
+}
+
+component PrimaryButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon: Icons.shield;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 46px;
+    border-radius: 10px;
+    background: root.danger ? transparent : Theme.accent-grad;
+    border-width: root.danger ? 1px : 0px;
+    border-color: Theme.err;
+    opacity: !root.enabled ? 0.45 : ta.pressed ? 0.85 : 1;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+        Glyph {
+            d: root.icon;
+            size: 18px;
+            stroke: root.danger ? Theme.err : white;
+            y: (parent.height - self.height) / 2;
+            visible: !root.danger;
+        }
+        Text {
+            text: root.label;
+            color: root.danger ? Theme.err : white;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: Theme.font;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    callback clicked;
+    height: 26px;
+    border-radius: 13px;
+    background: Theme.card-2;
+    border-color: Theme.border;
+    border-width: 1px;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        if root.icon != "": Glyph {
+            d: root.icon;
+            size: 13px;
+            stroke: Theme.muted;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            color: Theme.text;
+            font-size: 12px;
+            font-family: Theme.font;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Switch inherits Rectangle {
+    in-out property <bool> on: true;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: root.on ? Theme.accent : Theme.card-2;
+    border-color: Theme.border;
+    border-width: root.on ? 0px : 1px;
+    Rectangle {
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: white;
+        y: 3px;
+        x: root.on ? parent.width - self.width - 3px : 3px;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.on = !root.on; }
+    }
+}
+
+// Segment « Mode » : tunnel complet via service / proxy.
+component Segment inherits Rectangle {
+    in-out property <int> index: 1;
+    in property <bool> enabled: true;
+    callback changed(int);
+    height: 58px;
+    background: Theme.bg;
+    border-radius: 10px;
+    border-color: Theme.border;
+    border-width: 1px;
+    opacity: root.enabled ? 1 : 0.5;
+    HorizontalLayout {
+        padding: 4px;
+        spacing: 6px;
+        for item[i] in [
+            { title: "Tunnel complet", sub: "via service" },
+            { title: "Proxy", sub: "sans droits admin" },
+        ] : Rectangle {
+            border-radius: 7px;
+            background: root.index == i ? Theme.card-2 : transparent;
+            border-width: root.index == i ? 1px : 0px;
+            border-color: Theme.accent;
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                Text {
+                    text: item.title;
+                    horizontal-alignment: center;
+                    font-size: 12.5px;
+                    font-family: Theme.font;
+                    color: root.index == i ? Theme.text : Theme.muted;
+                }
+                Text {
+                    text: item.sub;
+                    horizontal-alignment: center;
+                    font-size: 11px;
+                    font-family: Theme.font;
+                    color: Theme.muted;
+                    opacity: 0.7;
+                }
+            }
+            TouchArea {
+                enabled: root.enabled;
+                mouse-cursor: pointer;
+                clicked => {
+                    root.index = i;
+                    root.changed(i);
+                }
+            }
+        }
+    }
+}
+
+component Hero inherits HorizontalLayout {
+    in property <int> tone; // 0 gris, 1 orange, 2 vert
+    in property <string> host;
+    in property <string> status;
+    in property <string> icon: Icons.shield;
+    spacing: 12px;
+    property <color> tint: tone == 2 ? Theme.ok : tone == 1 ? Theme.warn : Theme.idle;
+    Rectangle {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: Theme.card-2;
+        border-color: Theme.border;
+        border-width: 1px;
+        Glyph {
+            d: root.icon;
+            size: 22px;
+            stroke: root.tint;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.host == "" ? "fortivpn-rs" : root.host;
+            color: Theme.text;
+            font-size: 16px;
+            font-weight: 600;
+            font-family: Theme.font;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: root.tint;
+            }
+            Text {
+                text: root.status;
+                color: root.tone == 2 ? Theme.ok : root.tone == 1 ? Theme.warn : Theme.text;
+                font-size: 12px;
+                font-family: Theme.font;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component Sect inherits Text {
+    color: Theme.muted;
+    font-size: 12px;
+    font-family: Theme.font;
+}
+
+component RedirRow inherits Rectangle {
+    in property <string> listen;
+    in property <string> target;
+    in property <bool> first: false;
+    height: 28px;
+    if !root.first: Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.border;
+    }
+    HorizontalLayout {
+        padding-top: 6px;
+        padding-bottom: 6px;
+        Text {
+            text: root.listen;
+            color: Theme.text;
+            font-size: 12px;
+            font-family: Theme.mono;
+            vertical-alignment: center;
+        }
+        Rectangle { }
+        Text {
+            text: "→ " + root.target;
+            color: Theme.muted;
+            font-size: 12px;
+            font-family: Theme.mono;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "fortivpn-rs";
+    background: Theme.bg-win;
+    default-font-family: Theme.font;
+    default-font-size: 14px;
+    preferred-width: 420px;
+    preferred-height: 640px;
+    min-width: 420px;
+    min-height: 640px;
+
+    // --- état (affichage) ---
+    in property <int> screen: 0; // 0 déconnecté, 1 connexion, 2 connecté
+    in property <int> tone: 0; // 0 gris, 1 orange, 2 vert
+    in property <string> host-label;
+    in property <string> status-text: "Déconnecté";
+    in property <[StepItem]> steps;
+    in property <float> progress;
+    in property <string> step-hint;
+    in property <string> error-text;
+    in property <string> address;
+    in property <string> duration: "--:--:--";
+    in property <string> socks-text;
+    in property <[RedirItem]> forwards;
+    in property <bool> reconnect-auto: true;
+    in property <string> service-hint;
+    in property <[LogItem]> log;
+    in property <bool> busy: false;
+    in property <string> settings-message;
+    in property <bool> settings-ok: false;
+    in property <bool> otp-open: false;
+    in property <bool> otp-push: false;
+    in property <string> otp-message;
+    in-out property <string> otp-code; // effacé par le code après usage
+
+    // --- saisies ---
+    in-out property <bool> settings-open: false;
+    in-out property <bool> about-open: false;
+    in property <string> app-version;
+    in property <string> app-repo;
+    in-out property <int> mode: 1; // 0 service, 1 proxy
+    in-out property <string> username;
+    in-out property <string> password; // effacé par le code après usage
+    in-out property <string> s-host;
+    in-out property <string> s-port;
+    in-out property <string> s-user;
+    in-out property <string> s-fingerprint;
+    in-out property <string> s-socks-addr;
+    in-out property <string> s-socks-port;
+    in-out property <string> s-forwards;
+    in-out property <bool> s-reconnect: true;
+
+    callback connect();
+    callback cancel();
+    callback disconnect();
+    callback mode-changed(int);
+    callback open-settings();
+    callback save-settings();
+    callback otp-submit();
+    callback otp-cancel();
+
+    if !root.settings-open: VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        Hero {
+            tone: root.tone;
+            host: root.host-label;
+            status: root.status-text;
+            icon: root.screen == 1 ? Icons.refresh : Icons.shield;
+        }
+
+        // 1. Déconnecté
+        if root.screen == 0: VerticalLayout {
+            spacing: 14px;
+            vertical-stretch: 1;
+            Card {
+                Field {
+                    label: "Utilisateur";
+                    text <=> root.username;
+                }
+                VerticalLayout {
+                    spacing: 5px;
+                    Field {
+                        label: "Mot de passe";
+                        password: true;
+                        text <=> root.password;
+                        accepted => { root.connect(); }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Glyph { d: Icons.lock; size: 13px; stroke: Theme.muted; y: (parent.height - self.height) / 2; }
+                        Text {
+                            text: "Jamais enregistré, demandé à chaque connexion";
+                            color: Theme.muted;
+                            font-size: 11.5px;
+                            font-family: Theme.font;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                spacing: 4px;
+                Label { text: "Mode"; }
+                Segment {
+                    index <=> root.mode;
+                    changed(i) => { root.mode-changed(i); }
+                }
+                if root.service-hint != "": Text {
+                    text: root.service-hint;
+                    color: Theme.warn;
+                    font-size: 11.5px;
+                    font-family: Theme.font;
+                    wrap: word-wrap;
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            if root.error-text != "": Text {
+                text: root.error-text;
+                color: Theme.err;
+                font-size: 12px;
+                font-family: Theme.font;
+                wrap: word-wrap;
+            }
+            PrimaryButton {
+                label: "Connecter";
+                enabled: !root.busy;
+                clicked => { root.connect(); }
+            }
+            HorizontalLayout {
+                Text {
+                    text: root.reconnect-auto ? "Reconnexion auto : activée" : "Reconnexion auto : désactivée";
+                    color: Theme.muted;
+                    font-size: 12px;
+                    font-family: Theme.font;
+                    vertical-alignment: center;
+                }
+                Rectangle { }
+                Chip {
+                    label: "Réglages";
+                    icon: Icons.gear;
+                    clicked => { root.open-settings(); }
+                }
+            }
+        }
+
+        // 2. Connexion en cours
+        if root.screen == 1: VerticalLayout {
+            spacing: 14px;
+            vertical-stretch: 1;
+            Card {
+                for step[i] in root.steps: HorizontalLayout {
+                    spacing: 12px;
+                    height: 24px;
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 12px;
+                        background: step.state == 2 ? #3ddc9726 : Theme.card-2;
+                        border-width: 1px;
+                        border-color: step.state == 2 ? Theme.ok : step.state == 1 ? Theme.accent : Theme.border;
+                        if step.state == 2: Glyph {
+                            d: Icons.check;
+                            size: 14px;
+                            stroke: Theme.ok;
+                            x: 5px;
+                            y: 5px;
+                        }
+                        if step.state == 1: Glyph {
+                            d: Icons.spin;
+                            size: 14px;
+                            stroke: Theme.accent;
+                            x: 5px;
+                            y: 5px;
+                        }
+                    }
+                    Text {
+                        text: step.label;
+                        color: step.state == 0 ? Theme.muted : Theme.text;
+                        font-size: 14px;
+                        font-family: Theme.font;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { }
+                    Text {
+                        text: step.time;
+                        color: Theme.muted;
+                        font-size: 12px;
+                        font-family: Theme.mono;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle {
+                height: 6px;
+                background: Theme.card-2;
+                border-radius: 3px;
+                clip: true;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * root.progress;
+                    height: parent.height;
+                    background: Theme.accent-grad;
+                    border-radius: 3px;
+                    animate width { duration: 200ms; easing: ease-out; }
+                }
+            }
+            Text {
+                text: root.step-hint;
+                color: Theme.muted;
+                font-size: 12px;
+                font-family: Theme.font;
+            }
+            Rectangle { vertical-stretch: 1; }
+            PrimaryButton {
+                label: "Annuler";
+                danger: true;
+                clicked => { root.cancel(); }
+            }
+        }
+
+        // 3. Connecté
+        if root.screen == 2: VerticalLayout {
+            spacing: 14px;
+            vertical-stretch: 1;
+            GridLayout {
+                spacing: 10px;
+                Row {
+                    Card {
+                        Label { text: "Adresse"; }
+                        Text { text: root.address; color: Theme.text; font-size: 18px; font-weight: 600; font-family: Theme.mono; }
+                    }
+                    Card {
+                        Label { text: "Durée de session"; }
+                        Text { text: root.duration; color: Theme.text; font-size: 18px; font-weight: 600; font-family: Theme.font; }
+                    }
+                }
+                Row {
+                    Card {
+                        Label { text: "Envoi"; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            Glyph { d: Icons.arrow-up; size: 18px; stroke: Theme.accent-2; }
+                            Text { text: "—"; color: Theme.accent-2; font-size: 18px; font-weight: 600; font-family: Theme.font; }
+                        }
+                    }
+                    Card {
+                        Label { text: "Réception"; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            Glyph { d: Icons.arrow-down; size: 18px; stroke: Theme.ok; }
+                            Text { text: "—"; color: Theme.ok; font-size: 18px; font-weight: 600; font-family: Theme.font; }
+                        }
+                    }
+                }
+            }
+            if root.mode == 1: Card {
+                Label { text: "Proxy local"; }
+                if root.socks-text != "": Text {
+                    text: "SOCKS5 " + root.socks-text;
+                    color: Theme.text;
+                    font-size: 12.5px;
+                    font-family: Theme.mono;
+                }
+                VerticalLayout {
+                    spacing: 0px;
+                    for r[i] in root.forwards: RedirRow {
+                        listen: r.listen;
+                        target: r.target;
+                        first: i == 0;
+                    }
+                }
+            }
+            if root.mode == 0: Card {
+                Label { text: "Tunnel complet"; }
+                Text {
+                    text: "Routes et DNS gérés par le service Windows";
+                    color: Theme.text;
+                    font-size: 12.5px;
+                    font-family: Theme.font;
+                    wrap: word-wrap;
+                }
+            }
+            HorizontalLayout {
+                Chip {
+                    label: root.reconnect-auto ? "Reconnexion auto activée" : "Reconnexion auto désactivée";
+                    icon: Icons.refresh;
+                }
+                Rectangle { }
+                Chip {
+                    label: "Journal";
+                    icon: Icons.gear;
+                    clicked => { root.open-settings(); }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            PrimaryButton {
+                label: "Déconnecter";
+                danger: true;
+                clicked => { root.disconnect(); }
+            }
+        }
+    }
+
+    // 4. Réglages + journal
+    if root.settings-open: VerticalLayout {
+        // En-tête : retour + titre
+        Rectangle {
+            height: 44px;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 8px;
+                Rectangle {
+                    width: 28px;
+                    Glyph { d: Icons.back; size: 18px; stroke: Theme.muted; x: 5px; y: (parent.height - self.height) / 2; }
+                    TouchArea { mouse-cursor: pointer; clicked => { root.settings-open = false; } }
+                }
+                Glyph { d: Icons.gear; size: 16px; stroke: Theme.muted; y: (parent.height - self.height) / 2; }
+                Text { text: "Réglages"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        Flickable {
+            viewport-height: settings-content.preferred-height;
+            settings-content := VerticalLayout {
+                padding: 20px;
+                spacing: 14px;
+                Sect { text: "PASSERELLE"; }
+                Card {
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Field { label: "Passerelle"; text <=> root.s-host; }
+                        Field { label: "Port"; text <=> root.s-port; mono: true; horizontal-stretch: 0; preferred-width: 90px; }
+                    }
+                    Field { label: "Utilisateur"; text <=> root.s-user; }
+                    Field { label: "Empreinte du certificat (SHA-256)"; text <=> root.s-fingerprint; mono: true; placeholder: "optionnel : 64 caractères hexadécimaux"; }
+                }
+                Sect { text: "PROXY"; }
+                Card {
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Field { label: "SOCKS5, adresse"; text <=> root.s-socks-addr; mono: true; }
+                        Field { label: "Port"; text <=> root.s-socks-port; mono: true; horizontal-stretch: 0; preferred-width: 90px; }
+                    }
+                    Field {
+                        label: "Redirections (écoute=hôte:port, séparées par des virgules)";
+                        text <=> root.s-forwards;
+                        mono: true;
+                        placeholder: "127.0.0.1:2222=10.0.0.10:22";
+                    }
+                }
+                Card {
+                    HorizontalLayout {
+                        Text { text: "Reconnexion automatique"; color: Theme.text; font-size: 14px; vertical-alignment: center; }
+                        Rectangle { }
+                        Switch { on <=> root.s-reconnect; y: 0px; }
+                    }
+                }
+                if root.settings-message != "": Text {
+                    text: root.settings-message;
+                    color: root.settings-ok ? Theme.ok : Theme.err;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                PrimaryButton {
+                    label: "Enregistrer";
+                    icon: Icons.check;
+                    enabled: !root.busy;
+                    clicked => { root.save-settings(); }
+                }
+                Text {
+                    text: "À propos de fortivpn-rs";
+                    color: Theme.accent-2;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    TouchArea { mouse-cursor: pointer; clicked => { root.about-open = true; } }
+                }
+                Sect { text: "JOURNAL"; }
+                Rectangle {
+                    background: #08090c;
+                    border-color: Theme.border;
+                    border-width: 1px;
+                    border-radius: Theme.radius-s;
+                    min-height: 60px;
+                    VerticalLayout {
+                        padding: 10px;
+                        padding-left: 12px;
+                        spacing: 2px;
+                        if root.log.length == 0: Text {
+                            text: "Aucun événement";
+                            color: Theme.muted;
+                            font-size: 11.5px;
+                            font-family: Theme.mono;
+                        }
+                        for line in root.log: HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: line.ts; color: Theme.muted; font-size: 11.5px; font-family: Theme.mono; }
+                            Text {
+                                width: 36px;
+                                text: line.level == 1 ? "OK" : line.level == 2 ? "WARN" : line.level == 3 ? "ERR" : "INFO";
+                                color: line.level == 1 ? Theme.ok : line.level == 2 ? Theme.warn : line.level == 3 ? Theme.err : Theme.accent-2;
+                                font-size: 11.5px;
+                                font-family: Theme.mono;
+                            }
+                            Text {
+                                text: line.text;
+                                color: Theme.text;
+                                font-size: 11.5px;
+                                font-family: Theme.mono;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Boîte de dialogue du second facteur (modale).
+    if root.otp-open: Rectangle {
+        background: #000000b0;
+        TouchArea { }
+        Rectangle {
+            width: min(parent.width - 40px, 360px);
+            height: dialog.preferred-height;
+            background: Theme.card;
+            border-color: Theme.border;
+            border-width: 1px;
+            border-radius: Theme.radius;
+            dialog := VerticalLayout {
+                padding: 20px;
+                spacing: 14px;
+                Text {
+                    text: root.otp-push ? "Validation requise" : "Code de vérification";
+                    color: Theme.text;
+                    font-size: 16px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.otp-message;
+                    color: Theme.muted;
+                    font-size: 12.5px;
+                    wrap: word-wrap;
+                }
+                if !root.otp-push: Field {
+                    label: "Code";
+                    password: true;
+                    text <=> root.otp-code;
+                    accepted => { root.otp-submit(); }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    PrimaryButton {
+                        label: "Annuler";
+                        danger: true;
+                        clicked => { root.otp-cancel(); }
+                    }
+                    if !root.otp-push: PrimaryButton {
+                        label: "Valider";
+                        icon: Icons.check;
+                        clicked => { root.otp-submit(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // Écran « À propos » (attribution Slint Royalty-free : AboutSlint).
+    if root.about-open: Rectangle {
+        background: #000000b0;
+        TouchArea { clicked => { root.about-open = false; } }
+        Rectangle {
+            width: min(parent.width - 40px, 360px);
+            height: about-box.preferred-height;
+            background: Theme.card;
+            border-color: Theme.border;
+            border-width: 1px;
+            border-radius: Theme.radius;
+            TouchArea { }
+            about-box := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "fortivpn-rs"; color: Theme.text; font-size: 16px; font-weight: 600; }
+                Text { text: "Version " + root.app-version; color: Theme.muted; font-size: 12.5px; }
+                Text { text: "Licence Apache-2.0"; color: Theme.muted; font-size: 12.5px; }
+                if root.app-repo != "": Text {
+                    text: root.app-repo;
+                    color: Theme.accent-2;
+                    font-size: 12.5px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Licences tierces : THIRD-PARTY-LICENSES.md";
+                    color: Theme.muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                AboutSlint { }
+                PrimaryButton {
+                    label: "Fermer";
+                    clicked => { root.about-open = false; }
+                }
+            }
+        }
+    }
+}

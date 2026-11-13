@@ -46,6 +46,9 @@ pub enum SslVpnError {
     /// Second facteur exigé (non supporté dans le MVP).
     #[error("authentification à deux facteurs requise (non supportée)")]
     SecondFactorRequired,
+    /// Saisie du second facteur annulée par l'utilisateur.
+    #[error("second facteur annulé")]
+    SecondFactorCancelled,
     /// `ret=6`.
     #[error("challenge d'authentification non supporté")]
     UnsupportedChallenge,
@@ -78,6 +81,10 @@ impl From<SslVpnError> for TransportError {
     fn from(e: SslVpnError) -> Self {
         match e {
             SslVpnError::AuthFailed => Self::AuthFailed,
+            SslVpnError::SecondFactorRequired | SslVpnError::UnsupportedChallenge => {
+                Self::SecondFactorRequired
+            }
+            SslVpnError::SecondFactorCancelled => Self::Cancelled,
             SslVpnError::Io(io) | SslVpnError::Tls(io) | SslVpnError::Connect(io) => Self::Io(io),
             other => Self::Protocol(other.to_string()),
         }

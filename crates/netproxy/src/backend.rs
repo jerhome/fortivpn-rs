@@ -24,7 +24,16 @@ pub enum ProxyError {
     /// Configuration invalide.
     #[error(transparent)]
     Config(#[from] ProxyConfigError),
-    /// Écoute impossible (port occupé, droits…).
+    /// Port déjà utilisé par une autre application.
+    #[error(
+        "le port {addr} est déjà utilisé par une autre application ; \
+         changez le port dans la section [proxy] (`socks` ou `forward`)"
+    )]
+    AddrInUse {
+        /// Adresse demandée.
+        addr: SocketAddr,
+    },
+    /// Écoute impossible (droits, adresse invalide…).
     #[error("écoute sur {addr} impossible : {source}")]
     Bind {
         /// Adresse demandée.
@@ -88,10 +97,7 @@ impl ProxyBackend {
     pub fn new(config: ProxyConfig) -> Result<Self, ProxyError> {
         config.validate()?;
         let bind = |addr: SocketAddr| -> Result<std::net::TcpListener, ProxyError> {
-            let listener = std::net::TcpListener::bind(addr)
-                .and_then(|l| l.set_nonblocking(true).map(|()| l))
-                .map_err(|source| ProxyError::Bind { addr, source })?;
-            Ok(listener)
+            crate::listen::bind_exclusive(addr)
         };
         let mut pending = Vec::new();
         let mut socks = None;

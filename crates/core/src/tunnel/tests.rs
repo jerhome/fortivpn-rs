@@ -555,3 +555,126 @@ fn random_magic_is_nonzero_and_varies() {
     let b = random_magic();
     assert_ne!(a, b);
 }
+
+// ------------------------------------------------- stabilité (story 2.6)
+
+/// Flux dont l'écriture reste en tampon jusqu'à `flush` (comme TLS/TCP : rien ne part
+/// sans `flush`), pour vérifier que les trames de contrôle sont bien vidées.
+struct FlushOnly {
+    inner: DuplexStream,
+    pending: Vec<u8>,
+}
+
+impl tokio::io::AsyncRead for FlushOnly {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for FlushOnly {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        self.pending.extend_from_slice(buf);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let this = &mut *self;
+        while !this.pending.is_empty() {
+            match std::pin::Pin::new(&mut this.inner).poll_write(cx, &this.pending) {
+                std::task::Poll::Ready(Ok(n)) => {
+                    this.pending.drain(..n);
+                }
+                other => return other.map(|r| r.map(|_| ())),
+            }
+        }
+        std::pin::Pin::new(&mut this.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn control_frames_are_flushed_without_ip_traffic() {
+    let (client, server) = duplex(64 * 1024);
+    let mut gw = Gateway::new(server);
+    let stream = FlushOnly {
+        inner: client,
+        pending: Vec::new(),
+    };
+    let opening = tokio::spawn(open(stream, options()));
+    negotiate(&mut gw).await;
+    let _tunnel = opening.await.unwrap().expect("tunnel ouvert");
+    // Aucun trafic IP : seule la réponse de contrôle peut sortir, et elle doit l'être.
+    gw.send("lcp_echo_request_gateway").await;
+    gw.expect("lcp_echo_reply_client").await;
+    // Echo-Request avec données : recopiées, notre magic, même id.
+    let mut req = BytesMut::new();
+    let echo = ControlPacket::echo(Code::EchoRequest, 0x42, 0x5e6f_7081, b"abcd").unwrap();
+    frame::encode_frame(&echo.to_frame(Protocol::LCP), &mut req).unwrap();
+    gw.send_raw(&req).await;
+    let reply = gw.recv_lcp().await;
+    assert_eq!((reply.code(), reply.id()), (Code::EchoReply, 0x42));
+    let (magic, data) = reply.magic_and_data().unwrap();
+    assert_eq!((magic, &data[..]), (CLIENT_MAGIC, &b"abcd"[..]));
+}
+
+#[tokio::test]
+async fn discard_request_and_ccp_get_no_fatal_reaction() {
+    let (tunnel, mut gw) = open_negotiated().await;
+    let discard = ControlPacket::echo(Code::DiscardRequest, 9, 0x5e6f_7081, b"xx").unwrap();
+    let mut buf = BytesMut::new();
+    frame::encode_frame(&discard.to_frame(Protocol::LCP), &mut buf).unwrap();
+    // CCP Configure-Request (0x80fd) : Protocol-Reject, pas de coupure.
+    frame::encode_frame(&[0x80, 0xfd, 1, 1, 0, 4], &mut buf).unwrap();
+    gw.send_raw(&buf).await;
+    let p = gw.recv_lcp().await;
+    assert_eq!(p.code(), Code::ProtocolReject);
+    assert_eq!(p.rejected_protocol().unwrap().0, Protocol(0x80fd));
+    gw.send("lcp_echo_request_gateway").await;
+    gw.expect("lcp_echo_reply_client").await;
+    assert!(!tunnel.handle.is_finished());
+}
+
+#[tokio::test]
+async fn non_ipv4_packets_from_tun_are_not_sent_as_ppp_ipv4() {
+    let (tunnel, mut gw) = open_negotiated().await;
+    // Paquet IPv6 (RS/MLD émis par l'OS sur la TUN) puis datagramme tronqué : écartés.
+    let mut v6 = vec![0u8; 48];
+    v6[0] = 0x60;
+    tunnel.packets.send(Bytes::from(v6)).await.unwrap();
+    tunnel
+        .packets
+        .send(Bytes::from_static(&[0x45, 0, 0, 40]))
+        .await
+        .unwrap();
+    let request = wire("ipv4_icmp_echo_request_raw_ip");
+    tunnel.packets.send(Bytes::from(request)).await.unwrap();
+    // La première trame sortante est l'ICMP IPv4 valide.
+    gw.expect("ipv4_icmp_echo_request").await;
+}
+
+#[test]
+fn ipv4_datagram_check() {
+    assert!(is_ipv4_datagram(&wire("ipv4_icmp_echo_request_raw_ip")));
+    assert!(!is_ipv4_datagram(&[0x60; 40]));
+    assert!(!is_ipv4_datagram(&[0x45; 19]));
+    let mut p = vec![0x45, 0, 0, 100];
+    p.resize(40, 0);
+    assert!(!is_ipv4_datagram(&p), "longueur totale > paquet");
+}

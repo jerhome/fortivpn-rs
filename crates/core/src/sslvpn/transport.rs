@@ -18,6 +18,7 @@
 //! logout (best effort, borné par [`Timeouts::logout`](super::Timeouts)).
 
 use std::fmt;
+use std::sync::Arc;
 
 use proto::auth::SessionCookie;
 
@@ -25,7 +26,9 @@ use super::client::{SslVpnClient, SslVpnOptions};
 use super::config::tunnel_config;
 use super::error::SslVpnError;
 use crate::error::TransportError;
-use crate::transport::{ConnectStep, Credentials, ProgressSink, Transport, TransportSession};
+use crate::transport::{
+    ConnectStep, Credentials, ProgressSink, SecondFactorProvider, Transport, TransportSession,
+};
 use crate::tunnel::{self, TunnelError, TunnelHandle, TunnelOptions};
 
 /// Transport SSL-VPN (TLS + HTTP + PPP sur `0x5050`).
@@ -35,6 +38,7 @@ pub struct SslVpnTransport {
     /// tiré à chaque connexion.
     tunnel_options: Option<TunnelOptions>,
     progress: Option<ProgressSink>,
+    second_factor: Option<Arc<dyn SecondFactorProvider>>,
     cookie: Option<SessionCookie>,
     tunnel: Option<TunnelHandle>,
 }
@@ -44,6 +48,7 @@ impl fmt::Debug for SslVpnTransport {
         // Le cookie n'est jamais affiché : seulement sa présence.
         f.debug_struct("SslVpnTransport")
             .field("client", &self.client)
+            .field("second_factor", &self.second_factor.is_some())
             .field("has_cookie", &self.cookie.is_some())
             .field("tunnel_open", &self.tunnel.is_some())
             .finish_non_exhaustive()
@@ -71,6 +76,7 @@ impl SslVpnTransport {
             client,
             tunnel_options: None,
             progress: None,
+            second_factor: None,
             cookie: None,
             tunnel: None,
         }
@@ -81,6 +87,14 @@ impl SslVpnTransport {
     #[must_use]
     pub fn with_tunnel_options(mut self, options: TunnelOptions) -> Self {
         self.tunnel_options = Some(options);
+        self
+    }
+
+    /// Injecte le fournisseur de second facteur (OTP / FortiToken). Sans lui (défaut),
+    /// un challenge donne [`TransportError::SecondFactorRequired`].
+    #[must_use]
+    pub fn with_second_factor(mut self, provider: Arc<dyn SecondFactorProvider>) -> Self {
+        self.second_factor = Some(provider);
         self
     }
 
@@ -116,7 +130,10 @@ impl SslVpnTransport {
             tracing::debug!("réutilisation du cookie de session");
             return Ok(true);
         }
-        let cookie = self.client.authenticate(credentials).await?;
+        let cookie = self
+            .client
+            .authenticate_with(credentials, self.second_factor.as_deref())
+            .await?;
         self.cookie = Some(cookie);
         self.report(ConnectStep::Authenticated);
         Ok(false)

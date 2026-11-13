@@ -648,8 +648,8 @@ async fn shutdown_during_backoff() {
 async fn no_reconnect_on_auth_failure_or_protocol_error() {
     for err in [
         TransportError::AuthFailed,
-        // Second facteur exigé : remonté comme erreur de protocole.
-        TransportError::Protocol("authentification à deux facteurs requise".into()),
+        TransportError::SecondFactorRequired,
+        TransportError::Protocol("erreur de protocole".into()),
     ] {
         let backend = FakeNetBackend::new();
         let transport = FakeTransport::new(creds("good"), sample());
@@ -720,4 +720,33 @@ async fn clock_jump_forces_immediate_reconnect() {
     handle.shutdown();
     assert!(matches!(finish(task).await, DisconnectReason::Requested));
     assert!(backend.is_clean());
+}
+
+#[test]
+fn shutdown_within_caps_disconnect_timeout() {
+    let transport = FakeTransport::new(creds("pw"), sample());
+    let (session, handle, _events) = Session::new(
+        transport,
+        FakeNetBackend::new(),
+        creds("pw"),
+        SessionOptions::new("fvpn0"),
+    );
+    assert_eq!(session.effective_disconnect_timeout(), DISCONNECT_TIMEOUT);
+    handle.shutdown_within(Duration::from_secs(4));
+    assert_eq!(
+        session.effective_disconnect_timeout(),
+        Duration::from_secs(4)
+    );
+    // Jamais au-delà du délai configuré.
+    handle.shutdown_within(Duration::from_secs(3600));
+    assert_eq!(session.effective_disconnect_timeout(), DISCONNECT_TIMEOUT);
+}
+
+#[test]
+fn second_factor_is_never_transient() {
+    assert!(!TransportError::SecondFactorRequired.is_transient());
+    let from_ssl: TransportError = crate::sslvpn::SslVpnError::SecondFactorRequired.into();
+    assert!(matches!(from_ssl, TransportError::SecondFactorRequired));
+    let from_ssl: TransportError = crate::sslvpn::SslVpnError::UnsupportedChallenge.into();
+    assert!(matches!(from_ssl, TransportError::SecondFactorRequired));
 }

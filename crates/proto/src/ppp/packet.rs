@@ -376,9 +376,58 @@ impl Packet {
     }
 }
 
+/// Résumé d'une trame PPP de **contrôle** (protocole >= 0x8000 : LCP, NCP, CCP…),
+/// destiné à la trace (`-vv`). Les datagrammes de données (protocole < 0x4000) n'ont
+/// pas de résumé : leur contenu est celui de l'utilisateur et n'est jamais journalisé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlSummary {
+    /// Protocole PPP.
+    pub protocol: Protocol,
+    /// Code, si la trame porte au moins un en-tête `code|id|length`.
+    pub code: Option<Code>,
+    /// Identifiant.
+    pub id: Option<u8>,
+    /// Champ longueur annoncé (en-tête de 4 octets compris).
+    pub declared_len: Option<u16>,
+}
+
+impl ControlSummary {
+    /// Résume `frame` (protocole + information) ; `None` pour une trame de données ou
+    /// invalide.
+    pub fn of(frame: &[u8]) -> Option<Self> {
+        let f = PppFrame::parse(Bytes::copy_from_slice(frame)).ok()?;
+        if f.protocol.0 < 0x8000 {
+            return None;
+        }
+        let h = f.payload.get(..4);
+        Some(Self {
+            protocol: f.protocol,
+            code: h.map(|h| Code::from(h[0])),
+            id: h.map(|h| h[1]),
+            declared_len: h.map(|h| u16::from_be_bytes([h[2], h[3]])),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_summary_covers_control_only() {
+        let echo = [0xc0, 0x21, 0x09, 0x07, 0x00, 0x08, 1, 2, 3, 4];
+        let s = ControlSummary::of(&echo).unwrap();
+        assert_eq!(s.protocol, Protocol::LCP);
+        assert_eq!(s.code, Some(Code::EchoRequest));
+        assert_eq!((s.id, s.declared_len), (Some(7), Some(8)));
+        // CCP : résumé sans paquet exploitable.
+        let ccp = ControlSummary::of(&[0x80, 0xfd]).unwrap();
+        assert_eq!((ccp.protocol, ccp.code), (Protocol(0x80fd), None));
+        // Données IPv4 / IPv6 / trame vide : jamais de résumé.
+        assert_eq!(ControlSummary::of(&[0x00, 0x21, 0x45, 0, 0, 20]), None);
+        assert_eq!(ControlSummary::of(&[0x00, 0x57, 0x60]), None);
+        assert_eq!(ControlSummary::of(&[]), None);
+    }
 
     #[test]
     fn ppp_frame_tolerates_ff03_and_short_protocol() {

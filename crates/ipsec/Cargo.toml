@@ -10,4 +10,34 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Expose le répondeur IKE/ESP simulé (`testutil`) aux tests d'intégration.
+test-util = []
+
 [dependencies]
+aes = { workspace = true, features = ["zeroize"] }
+aes-gcm = { workspace = true, features = ["zeroize"] }
+bytes.workspace = true
+cbc.workspace = true
+des.workspace = true
+fortivpn-core = { path = "../core" }
+hmac.workspace = true
+ipnet.workspace = true
+md4.workspace = true
+num-bigint.workspace = true
+p256.workspace = true
+ring.workspace = true
+secrecy.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "time", "sync", "rt", "macros"] }
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+# Active `test-util` (répondeur simulé) et le FakeNetBackend de core pour tests/e2e_udp.rs.
+fortivpn-core = { path = "../core", features = ["test-util"] }
+ipsec = { path = ".", features = ["test-util"] }
+tokio = { workspace = true, features = ["net", "time", "sync", "rt", "rt-multi-thread", "macros"] }

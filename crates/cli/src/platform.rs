@@ -1,6 +1,7 @@
 //! Éléments dépendant de l'OS : backend réseau, durcissement, signaux d'arrêt.
 
 use std::io;
+use std::time::Duration;
 
 use fortivpn_core::{
     NetBackend, NetCleanup, NetError, NetGuard, TunDevice, TunInfo, TunOptions, TunnelConfig,
@@ -8,21 +9,21 @@ use fortivpn_core::{
 
 /// Durcissement du processus, à appeler en tout début de `main`.
 #[cfg(windows)]
-pub(crate) fn harden_process() -> Result<(), NetError> {
+pub fn harden_process() -> Result<(), NetError> {
     netwin::harden_dll_search()
 }
 
 /// Durcissement du processus (rien à faire hors Windows).
 #[cfg(not(windows))]
 #[allow(clippy::unnecessary_wraps)]
-pub(crate) fn harden_process() -> Result<(), NetError> {
+pub fn harden_process() -> Result<(), NetError> {
     Ok(())
 }
 
 /// Backend réseau de l'OS.
 #[cfg(target_os = "linux")]
 #[allow(clippy::unnecessary_wraps)]
-pub(crate) fn backend() -> Result<netlinux::LinuxNetBackend, NetError> {
+pub fn backend() -> Result<netlinux::LinuxNetBackend, NetError> {
     // DNS ignoré : le backend Linux sert aux tests e2e dans WSL.
     Ok(netlinux::LinuxNetBackend::new())
 }
@@ -30,7 +31,7 @@ pub(crate) fn backend() -> Result<netlinux::LinuxNetBackend, NetError> {
 /// Backend réseau de l'OS : prend le verrou d'instance unique, purge les résidus
 /// d'une exécution interrompue et avertit si des règles NRPT de GPO sont présentes.
 #[cfg(windows)]
-pub(crate) fn backend() -> Result<netwin::WinNetBackend, NetError> {
+pub fn backend() -> Result<netwin::WinNetBackend, NetError> {
     let backend = netwin::WinNetBackend::new(netwin::WinNetOptions::default())?;
     match backend.recover_stale() {
         Ok(report) => tracing::debug!(?report, "récupération des résidus réseau"),
@@ -47,22 +48,22 @@ pub(crate) fn backend() -> Result<netwin::WinNetBackend, NetError> {
 
 /// Backend réseau du système, selon l'OS.
 #[cfg(target_os = "linux")]
-pub(crate) type SystemBackend = netlinux::LinuxNetBackend;
+pub type SystemBackend = netlinux::LinuxNetBackend;
 /// Backend réseau du système, selon l'OS.
 #[cfg(windows)]
-pub(crate) type SystemBackend = netwin::WinNetBackend;
+pub type SystemBackend = netwin::WinNetBackend;
 
 /// Backend choisi par la configuration : système (TUN, routes, DNS ; droits
 /// administrateur) ou proxy en espace utilisateur (section `[proxy]`, aucun droit).
 #[derive(Debug)]
-pub(crate) enum AnyBackend {
+pub enum AnyBackend {
     System(SystemBackend),
     Proxy(netproxy::ProxyBackend),
 }
 
 /// Annulation correspondant à [`AnyBackend`].
 #[derive(Debug)]
-pub(crate) enum AnyCleanup {
+pub enum AnyCleanup {
     System(<SystemBackend as NetBackend>::Cleanup),
     Proxy(netproxy::ProxyCleanup),
 }
@@ -70,9 +71,7 @@ pub(crate) enum AnyCleanup {
 /// Choisit le backend. En mode proxy, le backend système n'est **pas** créé : ni
 /// verrou d'instance, ni récupération des résidus, ni aucun appel privilégié
 /// (seul le durcissement du chargement des DLL, fait en début de `main`, reste).
-pub(crate) fn select_backend(
-    proxy: Option<&netproxy::ProxyConfig>,
-) -> Result<AnyBackend, NetError> {
+pub fn select_backend(proxy: Option<&netproxy::ProxyConfig>) -> Result<AnyBackend, NetError> {
     match proxy {
         None => backend().map(AnyBackend::System),
         Some(config) => {
@@ -158,15 +157,20 @@ impl NetCleanup for AnyCleanup {
 /// Avertissement affiché quand des règles NRPT de stratégie de groupe existent
 /// (décision produit : avertir et continuer, ne jamais toucher à la clé Policies).
 #[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) const GPO_NRPT_WARNING: &str = "des règles DNS (NRPT) imposées par stratégie de \
+pub const GPO_NRPT_WARNING: &str = "des règles DNS (NRPT) imposées par stratégie de \
      groupe (GPO) sont présentes : Windows ignore alors les règles DNS du tunnel ; des \
      noms internes peuvent être résolus hors tunnel (fuite DNS possible en \
      full-tunnel). La connexion continue ; voir l'administrateur du poste si la \
      résolution des noms internes échoue.";
 
+/// Plafond de la déconnexion du transport quand Windows impose l'arrêt
+/// (`ctrl_close`, `ctrl_logoff`, `ctrl_shutdown`) : il tue le processus après ≈ 5 s.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const URGENT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(4);
+
 /// Attente des signaux d'arrêt, installés dès la création.
 #[derive(Debug)]
-pub(crate) struct ShutdownSignals {
+pub struct ShutdownSignals {
     #[cfg(unix)]
     interrupt: tokio::signal::unix::Signal,
     #[cfg(unix)]
@@ -192,7 +196,7 @@ impl ShutdownSignals {
     /// la console, fermeture de session, arrêt du système ; pour ces trois derniers,
     /// Windows termine le processus après un délai (≈ 5 s) : la session nettoie le
     /// réseau avant de déconnecter le transport.
-    pub(crate) fn install() -> io::Result<Self> {
+    pub fn install() -> io::Result<Self> {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{SignalKind, signal};
@@ -214,23 +218,25 @@ impl ShutdownSignals {
         }
     }
 
-    /// Attend le prochain signal d'arrêt et retourne son nom.
-    pub(crate) async fn recv(&mut self) -> &'static str {
+    /// Attend le prochain signal d'arrêt : son nom, et le plafond de déconnexion si
+    /// l'OS va tuer le processus ([`URGENT_DISCONNECT_TIMEOUT`]).
+    pub async fn recv(&mut self) -> (&'static str, Option<Duration>) {
         #[cfg(unix)]
         {
             tokio::select! {
-                _ = self.interrupt.recv() => "Ctrl+C",
-                _ = self.terminate.recv() => "SIGTERM",
+                _ = self.interrupt.recv() => ("Ctrl+C", None),
+                _ = self.terminate.recv() => ("SIGTERM", None),
             }
         }
         #[cfg(windows)]
         {
+            let urgent = Some(URGENT_DISCONNECT_TIMEOUT);
             tokio::select! {
-                _ = self.ctrl_c.recv() => "Ctrl+C",
-                _ = self.ctrl_break.recv() => "Ctrl+Break",
-                _ = self.close.recv() => "fermeture de la console",
-                _ = self.logoff.recv() => "fermeture de session",
-                _ = self.shutdown.recv() => "arrêt du système",
+                _ = self.ctrl_c.recv() => ("Ctrl+C", None),
+                _ = self.ctrl_break.recv() => ("Ctrl+Break", None),
+                _ = self.close.recv() => ("fermeture de la console", urgent),
+                _ = self.logoff.recv() => ("fermeture de session", urgent),
+                _ = self.shutdown.recv() => ("arrêt du système", urgent),
             }
         }
     }

@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maquette fortivpn-rs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0b0c10;
+  --bg-win: #111218;
+  --card: #181a22;
+  --card-2: #1f212c;
+  --border: #2a2d3a;
+  --text: #e8e9f0;
+  --muted: #8b8fa3;
+  --accent: #7c6cff;
+  --accent-2: #5b8cff;
+  --accent-grad: linear-gradient(135deg, #5b8cff, #8b5cf6);
+  --ok: #3ddc97;
+  --warn: #ffb454;
+  --err: #ff6b6b;
+  --idle: #6b7080;
+  --radius: 12px;
+  --radius-s: 8px;
+  --font: "Segoe UI Variable", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0; padding: 32px 24px 48px;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font); font-size: 14px; line-height: 1.45;
+}
+h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+.lead { color: var(--muted); margin: 0 0 28px; max-width: 70ch; }
+.grid { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+figure { margin: 0; }
+figcaption { color: var(--muted); font-size: 12px; margin: 0 0 8px 4px; text-transform: uppercase; letter-spacing: .06em; }
+
+.win {
+  width: 420px; max-width: 100%; min-height: 640px;
+  background: var(--bg-win); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+  box-shadow: 0 20px 50px rgba(0,0,0,.5);
+  display: flex; flex-direction: column;
+}
+.titlebar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.titlebar .dots { margin-left: auto; letter-spacing: 6px; }
+.content { padding: 20px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.label { color: var(--muted); font-size: 12px; margin-bottom: 4px; display: block; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+.hero { display: flex; align-items: center; gap: 12px; }
+.badge { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--card-2); border: 1px solid var(--border); }
+.badge svg { width: 22px; height: 22px; }
+.badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); } .badge.idle { color: var(--idle); }
+.hero h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); display: inline-block; }
+.dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot.warn { background: var(--warn); }
+
+.field { display: flex; flex-direction: column; }
+.input { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-s); color: var(--text); padding: 9px 11px; font: inherit; width: 100%; }
+.input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hint { font-size: 11.5px; color: var(--muted); margin-top: 5px; display: flex; gap: 6px; align-items: center; }
+.hint svg { width: 13px; height: 13px; }
+
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--bg); padding: 4px; border-radius: 10px; border: 1px solid var(--border); }
+.seg button { background: transparent; border: 0; color: var(--muted); padding: 8px 6px; border-radius: 7px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.seg button.on { background: var(--card-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.seg small { display: block; font-size: 11px; opacity: .7; }
+
+.btn { border: 0; border-radius: 10px; padding: 13px 16px; font: inherit; font-weight: 600; font-size: 15px; color: #fff; cursor: pointer; background: var(--accent-grad); width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn.danger { background: transparent; color: var(--err); border: 1px solid var(--err); }
+.btn.ghost { background: var(--card-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; padding: 9px 12px; width: auto; }
+.btn:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.spacer { flex: 1; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.steps li { display: flex; align-items: center; gap: 12px; }
+.ic { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--card-2); border: 1px solid var(--border); }
+.ic svg { width: 14px; height: 14px; }
+.ic.done { background: rgba(61,220,151,.15); border-color: var(--ok); color: var(--ok); }
+.ic.run { border-color: var(--accent); color: var(--accent); }
+.steps .t { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.bar { height: 6px; background: var(--card-2); border-radius: 99px; overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 66%; background: var(--accent-grad); border-radius: 99px; }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.up { color: var(--accent-2); } .down { color: var(--ok); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 99px; background: var(--card-2); border: 1px solid var(--border); }
+.redir { display: flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 12px; }
+.redir:first-of-type { border-top: 0; }
+
+.sect { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 4px 2px -4px; }
+.two { display: grid; grid-template-columns: 1fr 90px; gap: 10px; }
+.switch { width: 36px; height: 20px; border-radius: 99px; background: var(--accent); position: relative; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; right: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+.log { background: #08090c; border: 1px solid var(--border); border-radius: var(--radius-s); padding: 10px 12px; font-family: var(--mono); font-size: 11.5px; line-height: 1.7; overflow: hidden; }
+.log .i { color: var(--accent-2); } .log .o { color: var(--ok); } .log .w { color: var(--warn); } .log span.ts { color: var(--muted); }
+
+.tray { margin-top: 36px; }
+.tray .items { display: flex; gap: 14px; flex-wrap: wrap; }
+.tray .tile { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; font-size: 12.5px; }
+.tray svg { width: 22px; height: 22px; stroke-width: 2; }
+.g { color: var(--idle); } .o { color: var(--warn); } .v { color: var(--ok); }
+.note { margin-top: 28px; color: var(--muted); font-size: 12.5px; max-width: 70ch; }
+
+@media (max-width: 480px) {
+  body { padding: 20px 16px 40px; }
+  .grid { flex-direction: column; gap: 24px; align-items: stretch; }
+  figure, .win { width: 100%; }
+  .win { min-height: 0; }
+}
+</style>
+</head>
+<body>
+<h1>fortivpn-rs, maquette de l'interface</h1>
+<p class="lead">Story 8.0. Quatre écrans d'une fenêtre ~420×640 px, thème sombre. Données fictives uniquement.</p>
+
+<!-- Définitions d'icônes -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 5v6h-6"/></symbol>
+    <symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+    <symbol id="arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+    <symbol id="spin" viewBox="0 0 24 24"><path d="M12 3a9 9 0 019 9" /></symbol>
+  </defs>
+</svg>
+
+<div class="grid">
+
+<!-- 1. Déconnecté -->
+<figure>
+<figcaption>1. Déconnecté</figcaption>
+<div class="win">
+  <div class="titlebar"><svg><use href="#shield"/></svg> fortivpn-rs <span class="dots">···</span></div>
+  <div class="content">
+    <div class="hero">
+      <div class="badge idle"><svg><use href="#shield"/></svg></div>
+      <div><h2>vpn.example.com</h2><span class="status"><i class="dot"></i> Déconnecté</span></div>
+    </div>
+    <div class="card">
+      <div class="field" style="margin-bottom:12px">
+        <label class="label">Utilisateur</label>
+        <input class="input" value="utilisateur" readonly>
+      </div>
+      <div class="field">
+        <label class="label">Mot de passe</label>
+        <input class="input" type="password" value="motdepasse" readonly>
+        <div class="hint"><svg><use href="#lock"/></svg> Jamais enregistré, demandé à chaque connexion</div>
+      </div>
+    </div>
+    <div>
+      <span class="label">Mode</span>
+      <div class="seg">
+        <button class="on">Tunnel complet<small>via service</small></button>
+        <button>Proxy<small>sans droits admin</small></button>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn"><svg><use href="#shield"/></svg> Connecter</button>
+    <div class="row muted" style="font-size:12px"><span>Reconnexion auto : activée</span><span class="chip"><svg style="width:13px;height:13px"><use href="#gear"/></svg> Réglages</span></div>
+  </div>
+</div>
+</figure>
+
+<!-- 2. Connexion en cours -->
+<figure>
+<figcaption>2. Connexion en cours</figcaption>
+<div class="win">
+  <div class="titlebar"><svg><use href="#shield"/></svg> fortivpn-rs <span class="dots">···</span></div>
+  <div class="content">
+    <div class="hero">
+      <div class="badge warn"><svg><use href="#refresh"/></svg></div>
+      <div><h2>vpn.example.com</h2><span class="status"><i class="dot warn"></i> Connexion en cours…</span></div>
+    </div>
+    <div class="card">
+      <ul class="steps">
+        <li><span class="ic done"><svg><use href="#check"/></svg></span> TLS / Authentification <span class="t">44 ms</span></li>
+        <li><span class="ic done"><svg><use href="#check"/></svg></span> Configuration <span class="t">30 ms</span></li>
+        <li><span class="ic run"><svg><use href="#spin"/></svg></span> Tunnel <span class="t">28 ms</span></li>
+      </ul>
+    </div>
+    <div class="bar" role="progressbar" aria-valuenow="66" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+    <div class="muted" style="font-size:12px">Étape 3 sur 3, établissement du tunnel PPP</div>
+    <div class="spacer"></div>
+    <button class="btn danger">Annuler</button>
+  </div>
+</div>
+</figure>
+
+<!-- 3. Connecté -->
+<figure>
+<figcaption>3. Connecté (mode proxy)</figcaption>
+<div class="win">
+  <div class="titlebar"><svg><use href="#shield"/></svg> fortivpn-rs <span class="dots">···</span></div>
+  <div class="content">
+    <div class="hero">
+      <div class="badge ok"><svg><use href="#shield"/></svg></div>
+      <div><h2>vpn.example.com</h2><span class="status" style="color:var(--ok)"><i class="dot ok"></i> Connecté en 103 ms</span></div>
+    </div>
+    <div class="stats">
+      <div class="card stat"><span class="label">Adresse</span><div class="v mono">10.242.2.2</div></div>
+      <div class="card stat"><span class="label">Durée de session</span><div class="v">00:12:48</div></div>
+      <div class="card stat"><span class="label">Envoi</span><div class="v up"><svg style="vertical-align:-3px"><use href="#arrow-up"/></svg> 1,2 Mo/s</div></div>
+      <div class="card stat"><span class="label">Réception</span><div class="v down"><svg style="vertical-align:-3px"><use href="#arrow-down"/></svg> 4,8 Mo/s</div></div>
+    </div>
+    <div class="card">
+      <span class="label">Proxy local</span>
+      <div class="mono" style="margin-bottom:8px">SOCKS5 127.0.0.1:1080</div>
+      <div class="redir"><span>127.0.0.1:2222</span><span class="muted">→ 10.0.0.10:22</span></div>
+      <div class="redir"><span>127.0.0.1:3390</span><span class="muted">→ 10.0.0.20:3389</span></div>
+    </div>
+    <div class="row"><span class="chip"><svg style="width:13px;height:13px"><use href="#refresh"/></svg> Reconnexion auto activée</span><span class="muted" style="font-size:12px">Dernier paquet : 0,3 s</span></div>
+    <div class="spacer"></div>
+    <button class="btn danger">Déconnecter</button>
+  </div>
+</div>
+</figure>
+
+<!-- 4. Réglages + Journal -->
+<figure>
+<figcaption>4. Réglages et journal</figcaption>
+<div class="win">
+  <div class="titlebar"><svg><use href="#gear"/></svg> Réglages <span class="dots">···</span></div>
+  <div class="content">
+    <div class="sect">Passerelle</div>
+    <div class="card">
+      <div class="two" style="margin-bottom:10px">
+        <div class="field"><label class="label">Passerelle</label><input class="input" value="vpn.example.com" readonly></div>
+        <div class="field"><label class="label">Port</label><input class="input" value="443" readonly></div>
+      </div>
+      <div class="field" style="margin-bottom:10px"><label class="label">Utilisateur</label><input class="input" value="utilisateur" readonly></div>
+      <div class="field"><label class="label">Empreinte du certificat (SHA-256)</label><input class="input mono" value="ab12…ef90 (exemple)" readonly></div>
+    </div>
+    <div class="sect">Proxy</div>
+    <div class="card">
+      <div class="two" style="margin-bottom:10px">
+        <div class="field"><label class="label">SOCKS5, adresse</label><input class="input mono" value="127.0.0.1" readonly></div>
+        <div class="field"><label class="label">Port</label><input class="input mono" value="1080" readonly></div>
+      </div>
+      <span class="label">Redirections</span>
+      <div class="redir"><span>127.0.0.1:2222</span><span class="muted">→ 10.0.0.10:22</span></div>
+      <div class="redir"><span>127.0.0.1:3390</span><span class="muted">→ 10.0.0.20:3389</span></div>
+    </div>
+    <div class="card row"><span>Reconnexion automatique</span><span class="switch" role="img" aria-label="activée"></span></div>
+    <div class="sect">Journal</div>
+    <div class="log">
+      <div><span class="ts">14:02:11</span> <span class="i">INFO</span> Connexion à vpn.example.com:443</div>
+      <div><span class="ts">14:02:11</span> <span class="i">INFO</span> TLS + authentification (44 ms)</div>
+      <div><span class="ts">14:02:11</span> <span class="i">INFO</span> Configuration reçue (30 ms)</div>
+      <div><span class="ts">14:02:11</span> <span class="o">OK&nbsp;&nbsp;</span> Tunnel établi, IP 10.242.2.2</div>
+      <div><span class="ts">14:14:52</span> <span class="w">WARN</span> Liaison perdue, reconnexion…</div>
+    </div>
+  </div>
+</div>
+</figure>
+
+</div>
+
+<section class="tray">
+  <figcaption>Icône de zone de notification</figcaption>
+  <div class="items">
+    <div class="tile g"><svg><use href="#shield"/></svg><span style="color:var(--text)">Gris, déconnecté</span></div>
+    <div class="tile o"><svg><use href="#shield"/></svg><span style="color:var(--text)">Orange, connexion / reconnexion</span></div>
+    <div class="tile v"><svg><use href="#shield"/></svg><span style="color:var(--text)">Vert, connecté</span></div>
+  </div>
+</section>
+
+<p class="note">Maquette statique : aucune logique, aucun mot de passe réel. Le mot de passe n'est jamais persisté.</p>
+</body>
+</html>

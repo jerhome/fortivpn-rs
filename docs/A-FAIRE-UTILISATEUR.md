@@ -27,9 +27,22 @@ scripts/wsl-real-test.sh -t <IP interne connue> -d 60
   socks = "127.0.0.1:1080"
   # forward = ["127.0.0.1:13389=<serveur RDP interne>:3389"]
   ```
-- Lancer `fortivpn.exe -v connect` (terminal normal, **pas** admin), puis configurer le navigateur (ou une extension type FoxyProxy) sur SOCKS5 `127.0.0.1:1080` et ouvrir un site interne.
+- Copier l'exe dans un dossier local (ex. `%USERPROFILE%\fortivpn\`), pas de `wintun.dll` nécessaire en mode proxy ; `trusted_cert` comme en WSL.
+- Lancer `.\fortivpn.exe -v connect` (PowerShell normal, **pas** admin ; SmartScreen : « Informations complémentaires → Exécuter quand même »). Arrêter tout fortivpn WSL qui occuperait le port 1080.
+- Tester : `curl.exe --socks5-hostname 127.0.0.1:1080 http://<site interne>` ou Firefox (SOCKS v5 127.0.0.1:1080 + « DNS distant »).
+
+### T1-bis — Résultat WSL du 2026-11-13 20h41
+- Lancé sans `sudo` : auth 188 ms, config (split, 2 routes, 2 DNS), PPP OK, puis échec attendu de création TUN (EPERM, code 6) et déconnexion propre.
+- À refaire : `sudo ~/fortivpn-dist/fortivpn-linux -c ~/.config/fortivpn-rs/config.toml connect`, ou mode proxy sans sudo (`[proxy]` dans la config + `curl --socks5-hostname 127.0.0.1:1080 ...`).
 
 ### T3 — Avec l'admin (lundi/mardi) : service Windows + recette 3.W
 - L'admin lance une fois : `fortivpn.exe service install` (exe + `wintun.dll` dans `C:\Program Files\fortivpn-rs\`, config dans `%ProgramData%\fortivpn-rs\config.toml`).
 - Ensuite, sans admin : `fortivpn connect --service`, `fortivpn status`, `fortivpn disconnect`.
 - La checklist complète de recette est dans `docs/BACKLOG.md` (story 3.W).
+
+### T1-ter — Après le correctif 2.6 (filtre IPv6 + trace `-vv`)
+- Cause probable des coupures trouvée : des paquets IPv6 émis par Linux sur la TUN partaient dans le tunnel comme s'ils étaient IPv4 ; désormais filtrés.
+- Avant de lancer : `ip route show <IP passerelle>/32` ; si une route est là (résidu d'un run précédent) : `sudo ip route del <IP passerelle>/32`.
+- Lancer avec le **nouveau** binaire (`~/fortivpn-dist/fortivpn-linux`, recompilé après la GUI) :
+  `sudo ~/fortivpn-dist/fortivpn-linux -c ~/.config/fortivpn-rs/config.toml -vv connect 2>&1 | tee ~/fortivpn-tests/trace-$(date +%H%M).log`
+- Laisser tourner ≥ 3 min, puis Ctrl+C. Me donner le fichier : je cherche les lignes « trame PPP de contrôle », « fin du tunnel » et « paquet non IPv4 ignoré ».

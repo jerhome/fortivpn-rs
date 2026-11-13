@@ -329,6 +329,26 @@ fn logincheck(shared: &Shared, req: &Request) -> (AuthOutcome, Action) {
     let form = parse_form(&req.body);
     let field = |name: &str| form.iter().find(|(k, _)| k == name).map(|(_, v)| &v[..]);
     let opts = &shared.opts;
+    // 2e requête d'un challenge 2FA (§13) : pas de `credential`, mais `code`/`ftmpush`.
+    let is_second = opts.scenario == Scenario::SecondFactorRequired
+        && (field("code").is_some() || field("ftmpush").is_some());
+    if is_second {
+        let user_ok = field("username").is_some_and(|u| ct_eq(u, opts.username.as_bytes()));
+        let state_ok = field("reqid") == Some(&b"12345678"[..])
+            && (field("ftmpush").is_some() || field("magic") == Some(&b"1-23456789"[..]));
+        let code_ok = match (&opts.otp, field("code")) {
+            (Some(otp), Some(c)) => ct_eq(c, otp.as_bytes()),
+            (Some(_), None) => field("ftmpush").is_some(),
+            (None, _) => false,
+        };
+        if user_ok && state_ok && code_ok {
+            return accepted(shared);
+        }
+        let resp = Response::new(200, "OK")
+            .header("Content-Type", "text/plain")
+            .body("ret=0,redir=/remote/login?&err=sslvpn_login_permission_denied&lang=en");
+        return (AuthOutcome::Rejected, Action::Respond(resp));
+    }
     let user_ok = field("username").is_some_and(|u| ct_eq(u, opts.username.as_bytes()));
     let pass_ok = field("credential").is_some_and(|p| ct_eq(p, opts.password.as_bytes()));
     let realm_ok = match &opts.realm {
@@ -355,6 +375,11 @@ fn logincheck(shared: &Shared, req: &Request) -> (AuthOutcome, Action) {
             );
         return (AuthOutcome::SecondFactorRequested, Action::Respond(resp));
     }
+    accepted(shared)
+}
+
+fn accepted(shared: &Shared) -> (AuthOutcome, Action) {
+    let opts = &shared.opts;
     let cookie = shared.new_cookie();
     let resp = Response::new(200, "OK")
         .header(

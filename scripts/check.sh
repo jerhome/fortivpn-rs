@@ -53,12 +53,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test --workspace"
 cargo test --workspace
 
-step "cargo clippy -p netwin -p fortivpn-service -p cli -p netproxy --target $WIN_TARGET -- -D warnings"
+step "cargo clippy -p netwin -p fortivpn-service -p cli -p gui -p netproxy --target $WIN_TARGET -- -D warnings"
 if ! rustup target list --installed 2>/dev/null | grep -qx "$WIN_TARGET"; then
     echo "cible $WIN_TARGET absente : rustup target add $WIN_TARGET" >&2
     exit 1
 fi
-cargo clippy -p netwin -p fortivpn-service -p cli -p netproxy --target "$WIN_TARGET" --all-targets -- -D warnings
+cargo clippy -p netwin -p fortivpn-service -p cli -p gui -p netproxy --target "$WIN_TARGET" --all-targets -- -D warnings
 
 if (( FUZZ_SECS > 0 )); then
     # Crate fuzz/ hors workspace : n'affecte pas les étapes précédentes (stable).

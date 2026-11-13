@@ -43,6 +43,7 @@
 //! canaux bornés propagent la contre-pression de bout en bout.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::{mpsc, watch};
@@ -195,13 +196,29 @@ impl SessionEvents {
 
 /// Commande d'arrêt d'une session (clonable). Le libérer ne déclenche **pas** l'arrêt.
 #[derive(Debug, Clone)]
-pub struct SessionHandle(Arc<watch::Sender<bool>>);
+pub struct SessionHandle {
+    stop: Arc<watch::Sender<bool>>,
+    /// Plafond (ms) de la déconnexion du transport ; [`NO_LIMIT`] : aucun.
+    limit_ms: Arc<AtomicU64>,
+}
+
+/// Valeur de `limit_ms` sans plafond d'arrêt.
+const NO_LIMIT: u64 = u64::MAX;
 
 impl SessionHandle {
     /// Demande l'arrêt : la session se déconnecte et nettoie. Définitif : un nouvel
     /// appel à [`Session::run`] se termine aussitôt.
     pub fn shutdown(&self) {
-        self.0.send_replace(true);
+        self.stop.send_replace(true);
+    }
+
+    /// Comme [`shutdown`](Self::shutdown), mais plafonne la déconnexion du transport à
+    /// `limit` (au plus [`SessionOptions::disconnect_timeout`]) : pour un arrêt imposé
+    /// par l'OS qui tue le processus après un court délai (fermeture de session…).
+    pub fn shutdown_within(&self, limit: Duration) {
+        let ms = u64::try_from(limit.as_millis()).unwrap_or(NO_LIMIT - 1);
+        self.limit_ms.store(ms, Ordering::Relaxed);
+        self.shutdown();
     }
 }
 
@@ -245,6 +262,7 @@ pub struct Session<T, B: NetBackend> {
     options: SessionOptions,
     events: EventSink,
     shutdown: watch::Receiver<bool>,
+    limit_ms: Arc<AtomicU64>,
     /// Guard de la tentative précédente, conservé pendant `Reconnecting` si le backend
     /// le demande ([`NetBackend::keep_guard_during_reconnect`]).
     held_guard: Option<NetGuard<B::Cleanup>>,
@@ -260,6 +278,7 @@ impl<T: Transport, B: NetBackend> Session<T, B> {
         options: SessionOptions,
     ) -> (Self, SessionHandle, SessionEvents) {
         let (stop_tx, stop_rx) = watch::channel(false);
+        let limit_ms = Arc::new(AtomicU64::new(NO_LIMIT));
         let (ev_tx, ev_rx) = mpsc::unbounded_channel();
         let session = Self {
             transport,
@@ -271,11 +290,15 @@ impl<T: Transport, B: NetBackend> Session<T, B> {
                 start: Instant::now(),
             },
             shutdown: stop_rx,
+            limit_ms: Arc::clone(&limit_ms),
             held_guard: None,
         };
         (
             session,
-            SessionHandle(Arc::new(stop_tx)),
+            SessionHandle {
+                stop: Arc::new(stop_tx),
+                limit_ms,
+            },
             SessionEvents(ev_rx),
         )
     }
@@ -432,8 +455,25 @@ impl<T: Transport, B: NetBackend> Session<T, B> {
         }
     }
 
+    /// Délai de déconnexion effectif (réduit par `shutdown_within`).
+    fn effective_disconnect_timeout(&self) -> Duration {
+        let ms = self.limit_ms.load(Ordering::Relaxed);
+        if ms == NO_LIMIT {
+            self.options.disconnect_timeout
+        } else {
+            self.options
+                .disconnect_timeout
+                .min(Duration::from_millis(ms))
+        }
+    }
+
     async fn suspend_transport(&mut self) {
-        match timeout(self.options.disconnect_timeout, self.transport.suspend()).await {
+        match timeout(
+            self.effective_disconnect_timeout(),
+            self.transport.suspend(),
+        )
+        .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(e)) => tracing::warn!(error = %e, "échec de la suspension du transport"),
             Err(_) => tracing::warn!("suspension du transport : délai dépassé"),
@@ -441,7 +481,12 @@ impl<T: Transport, B: NetBackend> Session<T, B> {
     }
 
     async fn disconnect_transport(&mut self) {
-        match timeout(self.options.disconnect_timeout, self.transport.disconnect()).await {
+        match timeout(
+            self.effective_disconnect_timeout(),
+            self.transport.disconnect(),
+        )
+        .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(e)) => tracing::warn!(error = %e, "échec de la déconnexion du transport"),
             Err(_) => tracing::warn!("déconnexion du transport : délai dépassé"),

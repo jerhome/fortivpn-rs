@@ -1,11 +1,18 @@
 //! Construction du transport SSL-VPN à partir de la configuration.
 
+use std::sync::Arc;
+
 use fortivpn_core::sslvpn::{SslVpnError, SslVpnOptions, SslVpnTransport};
+use fortivpn_core::{
+    SecondFactorAnswer, SecondFactorChallenge, SecondFactorFuture, SecondFactorKind,
+    SecondFactorProvider,
+};
+use secrecy::SecretString;
 
 use crate::config::Config;
 
 /// Options SSL-VPN (hôte, port, realm, épinglage) tirées de la configuration.
-pub(crate) fn ssl_vpn_options(config: &Config) -> SslVpnOptions {
+pub fn ssl_vpn_options(config: &Config) -> SslVpnOptions {
     let mut options = SslVpnOptions::new(config.host.clone(), config.port);
     if let Some(realm) = &config.realm {
         options.realm.clone_from(realm);
@@ -21,7 +28,7 @@ pub(crate) fn ssl_vpn_options(config: &Config) -> SslVpnOptions {
 ///
 /// Appelée **avant** la saisie du mot de passe, pour échouer au plus tôt
 /// (options TLS invalides, racines système illisibles…).
-pub(crate) fn build_transport(config: &Config) -> Result<SslVpnTransport, SslVpnError> {
+pub fn build_transport(config: &Config) -> Result<SslVpnTransport, SslVpnError> {
     let options = ssl_vpn_options(config);
     tracing::debug!(
         host = %options.host,
@@ -30,6 +37,49 @@ pub(crate) fn build_transport(config: &Config) -> Result<SslVpnTransport, SslVpn
         "options SSL-VPN"
     );
     SslVpnTransport::new(&options)
+}
+
+/// Second facteur sur le terminal : code saisi sans écho (jamais stocké ni journalisé),
+/// ou simple invitation à valider la notification push. Une saisie vide ou impossible
+/// annule la connexion.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TerminalSecondFactor;
+
+impl TerminalSecondFactor {
+    /// Fournisseur prêt à injecter dans le transport.
+    pub fn provider() -> Arc<dyn SecondFactorProvider> {
+        Arc::new(Self)
+    }
+}
+
+impl SecondFactorProvider for TerminalSecondFactor {
+    fn second_factor<'a>(&'a self, challenge: &'a SecondFactorChallenge) -> SecondFactorFuture<'a> {
+        Box::pin(async move {
+            let message = challenge.message.clone().unwrap_or_default();
+            if challenge.kind == SecondFactorKind::Push {
+                eprintln!(
+                    "{}",
+                    if message.is_empty() {
+                        "Validez la notification FortiToken sur votre appareil…"
+                    } else {
+                        message.as_str()
+                    }
+                );
+                return SecondFactorAnswer::Push;
+            }
+            let prompt = if message.is_empty() {
+                "Code de vérification : ".to_owned()
+            } else {
+                format!("{message} : ")
+            };
+            // Saisie bloquante hors des threads du runtime.
+            let typed = tokio::task::spawn_blocking(move || crate::read_password(&prompt)).await;
+            match typed {
+                Ok(Ok(code)) => SecondFactorAnswer::Code(SecretString::from(code.as_str())),
+                _ => SecondFactorAnswer::Cancelled,
+            }
+        })
+    }
 }
 
 #[cfg(test)]

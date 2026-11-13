@@ -16,35 +16,35 @@ use clap::{ArgAction, Args, Parser, Subcommand};
         d'environnement, ni dans le fichier de configuration.",
     after_help = crate::exit::HELP,
 )]
-pub(crate) struct Cli {
+pub struct Cli {
     /// Fichier de configuration TOML (défaut : %APPDATA%\fortivpn-rs\config.toml
     /// sous Windows, ~/.config/fortivpn-rs/config.toml sous Linux).
     #[arg(short, long, global = true, value_name = "CHEMIN")]
-    pub(crate) config: Option<PathBuf>,
+    pub config: Option<PathBuf>,
 
     /// Journalisation plus détaillée (-v : debug, -vv : trace), relativement au
     /// niveau `log_level` de la configuration.
     #[arg(short, long, global = true, action = ArgAction::Count)]
-    pub(crate) verbose: u8,
+    pub verbose: u8,
 
     #[command(subcommand)]
-    pub(crate) command: Option<Command>,
+    pub command: Option<Command>,
 }
 
 /// Options de `connect`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Args)]
-pub(crate) struct ConnectArgs {
+pub struct ConnectArgs {
     /// Se connecter via le service Windows (SYSTEM) au lieu de ce processus : le
     /// service lit lui-même sa configuration (`%ProgramData%\fortivpn-rs\config.toml`),
     /// seul le mot de passe est envoyé ; aucune élévation de privilèges requise.
     #[arg(long)]
-    pub(crate) service: bool,
+    pub service: bool,
 }
 
 /// Actions de `service` (réservées aux administrateurs, sauf `run`, lancé par le
 /// gestionnaire de services).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
-pub(crate) enum ServiceAction {
+pub enum ServiceAction {
     /// Installer le service (démarrage automatique, compte SYSTEM) et le démarrer.
     Install,
     /// Arrêter et supprimer le service.
@@ -60,7 +60,7 @@ pub(crate) enum ServiceAction {
 
 /// Sous-commandes (`connect` par défaut).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
-pub(crate) enum Command {
+pub enum Command {
     /// Se connecter (commande par défaut) ; Ctrl+C pour se déconnecter proprement.
     Connect(ConnectArgs),
     /// Couper la connexion établie par le service.
@@ -80,7 +80,7 @@ pub(crate) enum Command {
 
 impl Cli {
     /// Sous-commande effective.
-    pub(crate) fn subcommand(&self) -> Command {
+    pub fn subcommand(&self) -> Command {
         self.command
             .unwrap_or(Command::Connect(ConnectArgs::default()))
     }

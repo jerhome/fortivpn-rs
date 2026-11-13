@@ -7,15 +7,17 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU32;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
 use fortivpn_core::fake::{FakeNetBackend, NetOp, RouteVia};
 use fortivpn_core::sslvpn::{CertFingerprint, SslVpnOptions, SslVpnTransport, TlsOptions};
 use fortivpn_core::{
-    Credentials, DisconnectReason, ReconnectPolicy, RoutingMode, Session, SessionEvent,
-    SessionEvents, SessionOptions, SessionState, Transport, TransportError, TunnelError,
-    TunnelOptions,
+    Credentials, DisconnectReason, ReconnectPolicy, RoutingMode, SecondFactorAnswer,
+    SecondFactorChallenge, SecondFactorFuture, SecondFactorKind, SecondFactorProvider, Session,
+    SessionEvent, SessionEvents, SessionOptions, SessionState, Transport, TransportError,
+    TunnelError, TunnelOptions,
 };
 use ipnet::IpNet;
 use mock_gw::{
@@ -377,8 +379,93 @@ async fn second_factor_required_gives_clear_error() {
         creds(),
     )
     .await;
-    let msg = connect_error(&reason).to_string();
-    assert!(msg.contains("deux facteurs"), "{msg}");
+    let e = connect_error(&reason);
+    assert!(matches!(e, TransportError::SecondFactorRequired), "{e:?}");
+    assert!(e.to_string().contains("double authentification"), "{e}");
+    gw.shutdown().await;
+}
+
+/// Fournisseur de test : répond `answer` et note les challenges reçus.
+struct FixedFactor {
+    answer: fn() -> SecondFactorAnswer,
+    seen: std::sync::Mutex<Vec<SecondFactorChallenge>>,
+}
+
+impl SecondFactorProvider for FixedFactor {
+    fn second_factor<'a>(&'a self, challenge: &'a SecondFactorChallenge) -> SecondFactorFuture<'a> {
+        self.seen.lock().unwrap().push(challenge.clone());
+        Box::pin(async move { (self.answer)() })
+    }
+}
+
+fn factor(answer: fn() -> SecondFactorAnswer) -> Arc<FixedFactor> {
+    Arc::new(FixedFactor {
+        answer,
+        seen: std::sync::Mutex::default(),
+    })
+}
+
+async fn otp_connect(
+    answer: fn() -> SecondFactorAnswer,
+) -> (
+    RunningGateway,
+    Result<fortivpn_core::TransportSession, TransportError>,
+    Arc<FixedFactor>,
+) {
+    let peer = PppPeer::default();
+    let gw = start(
+        MockGatewayBuilder::default()
+            .scenario(Scenario::SecondFactorRequired)
+            .otp("246810"),
+        &peer,
+    )
+    .await;
+    let p = factor(answer);
+    let mut t = transport(&gw, tunnel_options()).with_second_factor(p.clone());
+    let r = timeout(GUARD, t.connect(&creds())).await.expect("délai");
+    (gw, r, p)
+}
+
+#[tokio::test]
+async fn otp_correct_opens_tunnel() {
+    let (gw, r, p) = otp_connect(|| SecondFactorAnswer::Code("246810".into())).await;
+    let s = r.expect("tunnel attendu");
+    drop(s);
+    let seen = p.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].kind, SecondFactorKind::Code);
+    assert_eq!(
+        seen[0].message.as_deref(),
+        Some("Please enter your token code")
+    );
+    assert_eq!(count(&gw, "/remote/logincheck"), 2);
+    // Le code n'apparaît pas dans le journal de la passerelle.
+    for e in gw.log().entries() {
+        assert!(e.form.iter().all(|(_, v)| v != "246810"), "{e:?}");
+    }
+    gw.shutdown().await;
+}
+
+#[tokio::test]
+async fn otp_wrong_is_auth_failed() {
+    let (gw, r, _) = otp_connect(|| SecondFactorAnswer::Code("000000".into())).await;
+    assert!(matches!(r, Err(TransportError::AuthFailed)), "{r:?}");
+    assert_eq!(count(&gw, "/remote/sslvpn-tunnel"), 0);
+    gw.shutdown().await;
+}
+
+#[tokio::test]
+async fn otp_cancelled() {
+    let (gw, r, _) = otp_connect(|| SecondFactorAnswer::Cancelled).await;
+    assert!(matches!(r, Err(TransportError::Cancelled)), "{r:?}");
+    assert_eq!(count(&gw, "/remote/logincheck"), 1);
+    gw.shutdown().await;
+}
+
+#[tokio::test]
+async fn otp_push_is_accepted() {
+    let (gw, r, _) = otp_connect(|| SecondFactorAnswer::Push).await;
+    assert!(r.is_ok(), "{:?}", r.err());
     gw.shutdown().await;
 }
 

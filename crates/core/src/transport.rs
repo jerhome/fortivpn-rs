@@ -8,6 +8,7 @@
 
 use std::fmt;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use secrecy::SecretString;
@@ -35,6 +36,58 @@ impl Credentials {
             password: password.into(),
         }
     }
+}
+
+/// Nature du second facteur demandé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SecondFactorKind {
+    /// Code à saisir (OTP, FortiToken matériel/mobile).
+    Code,
+    /// Notification push FortiToken Mobile à approuver sur l'appareil.
+    Push,
+}
+
+/// Demande de second facteur transmise à un [`SecondFactorProvider`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecondFactorChallenge {
+    /// Nature du facteur demandé.
+    pub kind: SecondFactorKind,
+    /// Message de la passerelle (`chal_msg`), à afficher tel quel à l'utilisateur.
+    pub message: Option<String>,
+}
+
+/// Réponse d'un [`SecondFactorProvider`].
+#[non_exhaustive]
+pub enum SecondFactorAnswer {
+    /// Code saisi. Consommé et effacé de la mémoire dès la requête construite.
+    Code(SecretString),
+    /// (Challenge `Push`) l'utilisateur a été prévenu : envoyer la validation push ; la
+    /// passerelle répond une fois la notification approuvée ou expirée.
+    Push,
+    /// L'utilisateur renonce : la connexion échoue avec [`TransportError::Cancelled`].
+    Cancelled,
+}
+
+impl fmt::Debug for SecondFactorAnswer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Code(_) => f.write_str("Code([REDACTED])"),
+            Self::Push => f.write_str("Push"),
+            Self::Cancelled => f.write_str("Cancelled"),
+        }
+    }
+}
+
+/// Futur renvoyé par [`SecondFactorProvider::second_factor`].
+pub type SecondFactorFuture<'a> = Pin<Box<dyn Future<Output = SecondFactorAnswer> + Send + 'a>>;
+
+/// Fournisseur de second facteur (invite CLI, boîte de dialogue GUI…), injecté dans le
+/// transport. Appelé au plus une fois par authentification ; le code n'est jamais
+/// journalisé ni conservé par le transport.
+pub trait SecondFactorProvider: Send + Sync {
+    /// Obtient le second facteur pour `challenge`.
+    fn second_factor<'a>(&'a self, challenge: &'a SecondFactorChallenge) -> SecondFactorFuture<'a>;
 }
 
 /// Session établie par un transport.

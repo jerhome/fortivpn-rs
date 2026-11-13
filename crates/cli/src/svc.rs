@@ -18,7 +18,7 @@
 
 use std::path::Path;
 
-use fortivpn_core::{Credentials, DisconnectReason, SessionOptions, SessionState};
+use fortivpn_core::{Credentials, DisconnectReason, SessionState};
 use fortivpn_service::{
     ErrorCode, EventSink, Outcome, Request, Response, SessionRunner, Stage, State, StatusReport,
 };
@@ -35,7 +35,7 @@ use crate::{run, transport};
 // ---------------------------------------------------------------------------
 
 /// Étape du protocole correspondant à un état de session (`None` : pas d'étape).
-pub(crate) fn stage_of(state: &SessionState) -> Option<Stage> {
+pub fn stage_of(state: &SessionState) -> Option<Stage> {
     match state {
         SessionState::Connecting => Some(Stage::Connecting),
         SessionState::Authenticated => Some(Stage::Authenticated),
@@ -53,9 +53,10 @@ pub(crate) fn stage_of(state: &SessionState) -> Option<Stage> {
 fn error_code(exit: Exit) -> Option<ErrorCode> {
     match exit {
         Exit::Ok => None,
-        Exit::Internal | Exit::Usage => Some(ErrorCode::Internal),
+        Exit::Internal | Exit::Usage | Exit::Cancelled => Some(ErrorCode::Internal),
         Exit::Config => Some(ErrorCode::Config),
-        Exit::AuthRejected => Some(ErrorCode::AuthRejected),
+        // Pas de code dédié dans le protocole du service : le message précise la cause.
+        Exit::AuthRejected | Exit::SecondFactor => Some(ErrorCode::AuthRejected),
         Exit::Connection => Some(ErrorCode::Connection),
         Exit::LocalNetwork => Some(ErrorCode::LocalNetwork),
         Exit::AlreadyRunning => Some(ErrorCode::AlreadyRunning),
@@ -63,7 +64,7 @@ fn error_code(exit: Exit) -> Option<ErrorCode> {
 }
 
 /// Code de sortie du client pour un code d'erreur du service.
-pub(crate) fn exit_of(code: ErrorCode) -> Exit {
+pub fn exit_of(code: ErrorCode) -> Exit {
     match code {
         ErrorCode::BadRequest
         | ErrorCode::Timeout
@@ -79,7 +80,7 @@ pub(crate) fn exit_of(code: ErrorCode) -> Exit {
 }
 
 /// Issue d'une session pour le protocole.
-pub(crate) fn outcome_of(reason: &DisconnectReason) -> Outcome {
+pub fn outcome_of(reason: &DisconnectReason) -> Outcome {
     match error_code(exit::from_reason(reason)) {
         None => Outcome::requested(),
         Some(code) => Outcome::failed(code, run::describe_reason(reason)),
@@ -90,7 +91,7 @@ pub(crate) fn outcome_of(reason: &DisconnectReason) -> Outcome {
 /// et le fichier sont réservés aux administrateurs : sans cela, un utilisateur
 /// standard pourrait choisir l'hôte ou l'épinglage de certificat.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn load_protected_config(
+pub fn load_protected_config(
     path: &Path,
     check: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Config, String> {
@@ -113,7 +114,7 @@ pub(crate) fn load_protected_config(
 }
 
 /// Rendu lisible de l'état (sans secret) : état, étapes et durées par étape.
-pub(crate) fn render_status(report: &StatusReport) -> String {
+pub fn render_status(report: &StatusReport) -> String {
     use std::fmt::Write as _;
     let label = match report.state {
         State::Idle => "déconnecté",
@@ -168,7 +169,7 @@ pub(crate) fn render_status(report: &StatusReport) -> String {
 
 /// Exécute les sessions demandées par le pipe. Ne reçoit que le mot de passe.
 #[derive(Debug)]
-pub(crate) struct ServiceRunner {
+pub struct ServiceRunner {
     /// Chargeur de la configuration protégée (injectable pour les tests).
     load_config: fn() -> Result<Config, String>,
 }
@@ -176,7 +177,7 @@ pub(crate) struct ServiceRunner {
 impl ServiceRunner {
     /// Runner de production : configuration sous `%ProgramData%`.
     #[cfg_attr(not(windows), allow(dead_code))]
-    pub(crate) fn production() -> Self {
+    pub fn production() -> Self {
         Self {
             load_config: production_config,
         }
@@ -222,10 +223,11 @@ impl SessionRunner for ServiceRunner {
             transport,
             backend,
             credentials,
-            SessionOptions::new(config.interface.clone()),
+            config.session_options(),
             async {
                 // Signal reçu, ou contrôleur libéré : dans les deux cas, on s'arrête.
                 let _ = stop.await;
+                None
             },
             |event| {
                 tracing::info!("{}", reporter.observe(event));
@@ -259,7 +261,7 @@ fn production_config() -> Result<Config, String> {
 
 /// Commande adressée au service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ClientCommand {
+pub enum ClientCommand {
     Connect,
     Disconnect,
     Status,
@@ -267,7 +269,7 @@ pub(crate) enum ClientCommand {
 
 /// Un échange avec le service (pipe Windows).
 #[cfg(windows)]
-async fn exchange(request: &Request) -> Result<Response, String> {
+pub async fn exchange(request: &Request) -> Result<Response, String> {
     let mut pipe = fortivpn_service::connect_pipe()
         .await
         .map_err(|e| e.to_string())?;
@@ -278,7 +280,7 @@ async fn exchange(request: &Request) -> Result<Response, String> {
 
 #[cfg(not(windows))]
 #[allow(clippy::unused_async)]
-async fn exchange(_request: &Request) -> Result<Response, String> {
+pub async fn exchange(_request: &Request) -> Result<Response, String> {
     Err("le mode service n'existe que sous Windows".into())
 }
 
@@ -296,7 +298,7 @@ fn print_response(response: &Response) -> Exit {
 }
 
 /// Exécute `connect --service`, `disconnect` ou `status`.
-pub(crate) fn run_client(command: ClientCommand) -> Exit {
+pub fn run_client(command: ClientCommand) -> Exit {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -353,7 +355,7 @@ pub(crate) fn run_client(command: ClientCommand) -> Exit {
 // ---------------------------------------------------------------------------
 
 /// Exécute `service install|uninstall|start|stop|run`.
-pub(crate) fn run_admin(action: ServiceAction) -> Exit {
+pub fn run_admin(action: ServiceAction) -> Exit {
     #[cfg(windows)]
     {
         win::run_admin(action)

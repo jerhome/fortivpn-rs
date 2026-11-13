@@ -31,7 +31,7 @@ Le `NetBackend` (Epic 3) est commun aux deux.
 ## Epic 1 — Authentification
 
 - [x] **1.1** (RP) `POST /remote/logincheck` login/mot de passe → `SVPNCOOKIE`. **MVP**
-- [ ] **1.2** (RP) Second facteur OTP / FortiToken (challenge `tokeninfo`).
+- [x] **1.2** (RP) Second facteur OTP / FortiToken (challenge `tokeninfo`). _(proto+core+mock-gw faits ; branchement CLI/GUI à faire avec 8.1)_
 - [x] **1.3** (RP) Validation TLS (racines système) + épinglage SHA-256 optionnel. **MVP**
 - [ ] **1.4** (RP) SAML/SSO : navigateur + récupération du cookie via listener local (si requis).
 - [ ] **1.5** (WN) Certificat client depuis le magasin Windows (si requis).
@@ -42,7 +42,8 @@ Le `NetBackend` (Epic 3) est commun aux deux.
 - [x] **2.2** (RP) `GET /remote/sslvpn-tunnel` + framing (len total, `0x5050`, len PPP, trame). **MVP** _(framing fait ; requête sslvpn-tunnel en cours avec 1.1)_
 - [x] **2.3** (RP) Machine à états PPP : LCP (MRU, magic, echo) + IPCP (IP, DNS). **MVP**
 - [x] **2.4** (RP) Boucle async TUN ↔ TLS (tokio), keepalive LCP echo. **MVP**
-- [ ] **2.5** (RP) Option DTLS.
+- [ ] **2.6** (RP) **PRIORITAIRE** _(correctif filtre IPv6 + trace -vv faits ; validation terrain à faire, T1-ter)_ Stabilité du tunnel réel : la passerelle coupe après ~40 s (RST) puis DeadPeer (voir docs/field/2026-11-13-wsl-tunnel-drops.md) ; audit LCP Echo/Discard/Reply vs openfortivpn/openconnect, correctif, option de trace des trames PPP de contrôle (`-vv`, sans secret) ; route /32 passerelle EEXIST.
+- [ ] **2.5** (RP) Option DTLS. _(étude faite : docs/protocol-dtls.md — reportée : pas de crate DTLS pur Rust adaptée, suites FortiOS inconnues ; à reconsidérer après une capture réelle)_
 
 ## Epic 3 — Intégration réseau
 
@@ -76,6 +77,8 @@ uniquement sur demande explicite de l'utilisateur (story **3.W**).
 - [x] **4.2** (RP) Config TOML (hôte, port, utilisateur, realm, trusted-cert) ; mot de passe saisi à chaque connexion sans écho, jamais stocké.
 - [x] **4.3** (WN) Service Windows (SYSTEM) + CLI non-admin via named pipe.
 - [x] **4.4** (RP) Logs `tracing` + chronométrage de chaque étape de connexion. **MVP**
+- [x] **4.6** (RP) Finitions : variantes d'erreur dédiées (`TransportError::SecondFactorRequired`, `NetError::AlreadyRunning`) et codes de sortie CLI associés ; affichage lisible de `ClockJump` ; option TOML `[reconnect]` (activer/désactiver, backoff max) ; `disconnect_timeout` ≤ 4 s sous Windows (arrêt système).
+- [ ] **4.7** (RP) Message clair sur `EPERM` à la création de la TUN : « droits insuffisants : lancez avec sudo (Linux) / via le service (Windows), ou utilisez le mode proxy ([proxy] dans la config) ». Et sous sudo sans `-c` : chercher la config de `SUDO_USER` (ou le suggérer dans le message d'erreur). GUI lancée en root (sudo) : avertir « inutile de lancer l'interface avec sudo (mode proxy) » et utiliser la config de `SUDO_USER`.
 - [ ] **4.5** Icône zone de notification (plus tard).
 
 ## Epic 7 — Mode sans droits administrateur
@@ -83,7 +86,19 @@ uniquement sur demande explicite de l'utilisateur (story **3.W**).
 L'utilisateur n'est pas administrateur de son poste Windows (2026-11-13).
 
 - [x] **7.1** (RP) Mode proxy en espace utilisateur (sans TUN, sans admin) : pile TCP/IP `smoltcp` alimentée par le `PacketChannel` du tunnel ; proxy **SOCKS5** local (CONNECT TCP, résolution DNS via les DNS du tunnel) + **redirections de ports** `local:port → hôte:port` ; config TOML `[proxy]` ; aucune route/DNS système modifié. Fonctionne sous Windows non-admin et dans WSL.
+- [x] **7.S** (RP) Port d'écoute du proxy (revue 7.1, E1) : bind exclusif sous Windows (SO_EXCLUSIVEADDRUSE) et, en cas de conflit/détection d'un autre écouteur sur le même port, **informer clairement l'utilisateur** (message CLI/GUI + log) plutôt que de démarrer silencieusement. Les autres constats (M1, M2, F1–F3) sont reportés : docs/securite-versions-futures.md.
 - [x] **7.2** (TH) Tests e2e du mode proxy contre mock-gw (pair TCP simulé côté passerelle).
+
+## Epic 8 — Interface graphique (demandée 2026-11-13, après les stories en cours ; prioritaire sur la fin d'IPsec)
+
+Une seule base de code Rust multiplateforme en **Slint** (choix validé par l'utilisateur le 2026-11-13), design **dark et moderne**.
+- [x] **8.0** Maquettes et design : écrans connexion / état (étapes + durées) / journal / réglages, thème sombre. _(maquette validée : docs/gui/maquette.html)_
+- [x] **8.1** GUI Windows : connexion (mot de passe saisi, jamais stocké), état temps réel, déconnexion, journal, réglages (config TOML, mode proxy) ; fonctionne **sans droits admin** (mode proxy, ou via le service 4.3 une fois installé).
+- [x] **8.5** Licence Slint « Royalty-free » (choix utilisateur 2026-11-13) : écran « À propos » avec le widget `AboutSlint` / mention « Made with Slint », fichier de licences tierces (Slint + dépendances), README mis à jour.
+- [ ] **8.6** (RP) Première utilisation guidée (retour terrain Windows 2026-11-13) : config absente → ouvrir directement Réglages avec un assistant (passerelle, port, utilisateur, épinglage proposé après 1re connexion) au lieu d'une erreur ; mode Service grisé avec explication si le service n'est pas installé, mode Proxy sélectionné par défaut ; mémoriser le dernier mode choisi.
+- [ ] **8.2** Icône de zone de notification + notifications (fusionne 4.5).
+- [ ] **8.3** Distribution Windows : exe portable (+ wintun.dll pour le mode service), icône, version.
+- [ ] **8.4** (priorité basse) GUI Linux X11/Wayland — même base de code, tests dans WSLg.
 
 ## Epic 5 — Qualité
 
@@ -103,10 +118,12 @@ pas de fuzzing ni de couverture exhaustive des cas d'erreur ; revue sécurité e
       IKEv2 + EAP, NAT-T UDP 4500, IKE/ESP sur TCP FortiOS 7.4+), suites crypto, référence
       strongSwan/libreswan. Spec `docs/protocol-ipsec.md`.
 - [ ] **6.1** (RP) Crate `ipsec` : IKEv2 + PSK + EAP-MSCHAPv2 (variante retenue en 6.0, voir protocol-ipsec.md) — échange, auth PSK + XAuth/EAP mot de passe, mode-config.
-- [ ] **6.2** (RP) ESP en espace utilisateur sur UDP 4500 (AES-GCM / AES-CBC+HMAC), anti-rejeu, DPD.
-- [ ] **6.3** (RP) Rekey IKE/CHILD SA.
+- [x] **6.2** (RP) ESP en espace utilisateur sur UDP 4500 (AES-GCM / AES-CBC+HMAC), anti-rejeu, DPD.
+- [x] **6.3** (RP) Rekey IKE/CHILD SA.
+- [x] **6.T** (RP) `IpsecTransport` : implémentation du trait core `Transport` (sockets UDP 500/4500 tokio, pilotage IkeInitiator + EspTunnel, timers, DPD/rekey) ; test e2e contre le répondeur simulé sur vraies sockets UDP locales.
 - [ ] **6.4** (TH) Interop strongSwan « happy path » dans un netns WSL (pas de mock-gw IPsec).
-- [ ] **6.5** (SR) Revue crypto.
+- [x] **6.5** (SR) Revue crypto. _(docs/security/review-6.5-ipsec.md : 0 critique/élevé, 1 moyen, 8 faibles)_
+- [x] **6.S** (RP) Correctifs revue 6.5 : M1 (PSK minimal + `expected_idr` recommandé, préparer auth répondeur par certificat épinglé), F1 (erreurs IKE_SA_INIT non authentifiées ignorées jusqu'au timeout, cookie ≤ 64 o), F2 (PFS exigé au rekey CHILD), F3 (zeroize + chiffreur ESP en cache), F4 (ECP-256 en tête), F7/F8 (validation CP/TS et paquet IPv4 interne), I4 (tests négatifs).
 
 ## Ordre de réalisation proposé
 

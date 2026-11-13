@@ -11,27 +11,18 @@
 //!
 //! Codes de sortie : voir [`exit::Exit`].
 
-mod cli;
-mod config;
-mod exit;
-mod logging;
-mod platform;
-mod run;
-mod svc;
-mod transport;
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use fortivpn_core::{Credentials, SessionOptions};
+use fortivpn_core::Credentials;
 use secrecy::SecretString;
-use zeroize::Zeroizing;
 
-use crate::cli::{Cli, Command, ConnectArgs};
-use crate::config::Config;
-use crate::exit::Exit;
-use crate::svc::ClientCommand;
+use fortivpn_app::cli::{Cli, Command, ConnectArgs};
+use fortivpn_app::config::{self, Config};
+use fortivpn_app::exit::Exit;
+use fortivpn_app::svc::ClientCommand;
+use fortivpn_app::{exit, logging, platform, read_password, run, svc, transport};
 
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -123,7 +114,7 @@ fn connect(cli: &Cli) -> Exit {
 
     // Avant la saisie du mot de passe : échouer au plus tôt.
     let transport = match transport::build_transport(&config) {
-        Ok(t) => t,
+        Ok(t) => t.with_second_factor(transport::TerminalSecondFactor::provider()),
         Err(e) => {
             tracing::error!("{e}");
             return Exit::Internal;
@@ -168,15 +159,16 @@ fn connect(cli: &Cli) -> Exit {
             }
         };
         let stop = async move {
-            let name = signals.recv().await;
+            let (name, limit) = signals.recv().await;
             tracing::info!("{name} reçu");
+            limit
         };
         let mut reporter = run::Reporter::default();
         let reason = run::run_session(
             transport,
             backend,
             credentials,
-            SessionOptions::new(config.interface.clone()),
+            config.session_options(),
             stop,
             |event| {
                 tracing::info!("{}", reporter.observe(event));
@@ -196,18 +188,6 @@ fn connect(cli: &Cli) -> Exit {
         }
         exit
     })
-}
-
-/// Saisie sans écho ; le résultat est effacé à la libération. Refuse le vide.
-pub(crate) fn read_password(prompt: &str) -> std::io::Result<Zeroizing<String>> {
-    let typed = Zeroizing::new(rpassword::prompt_password(prompt)?);
-    if typed.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "mot de passe vide",
-        ));
-    }
-    Ok(typed)
 }
 
 /// Demande le mot de passe sur le terminal, sans écho. Il n'existe qu'en mémoire,

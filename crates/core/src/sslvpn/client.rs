@@ -5,7 +5,9 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use proto::auth::{AuthOutcome, SessionCookie, interpret_logincheck};
+use proto::auth::{
+    AuthOutcome, SecondFactor, SessionCookie, TOKENINFO_FTM_PUSH, interpret_logincheck,
+};
 use proto::config::{VpnConfig, parse_config};
 use proto::http::{self, ConfigQuery, Gateway, HttpResponse, ResponseParser};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -17,7 +19,9 @@ use zeroize::Zeroizing;
 
 use super::error::SslVpnError;
 use super::tls::{self, TlsOptions, TlsSetup};
-use crate::transport::Credentials;
+use crate::transport::{
+    Credentials, SecondFactorAnswer, SecondFactorChallenge, SecondFactorKind, SecondFactorProvider,
+};
 
 /// Délais (§11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,9 +276,23 @@ impl SslVpnClient {
     /// une connexion neuve (rejouée une fois sur nouvelle connexion en cas d'erreur
     /// d'E/S, comme openfortivpn), puis « allocation » si activée, puis fermeture.
     pub async fn authenticate(&self, creds: &Credentials) -> Result<SessionCookie, SslVpnError> {
+        self.authenticate_with(creds, None).await
+    }
+
+    /// Comme [`authenticate`](Self::authenticate), avec un fournisseur de second facteur
+    /// (§13). Sur un challenge `tokeninfo`, le fournisseur est interrogé une fois, puis
+    /// un 2e `logincheck` est envoyé (sur une connexion neuve, **sans** rejeu : un code
+    /// est à usage unique). Un nouveau challenge ou un refus ensuite donne
+    /// [`SslVpnError::AuthFailed`] ; sans fournisseur (ou pour le formulaire HTML 401),
+    /// [`SslVpnError::SecondFactorRequired`].
+    pub async fn authenticate_with(
+        &self,
+        creds: &Credentials,
+        provider: Option<&dyn SecondFactorProvider>,
+    ) -> Result<SessionCookie, SslVpnError> {
         let request =
             http::logincheck_request(&self.gateway, &creds.username, &creds.password, &self.realm);
-        let (mut conn, response) = match self.connect_and_request(&request).await {
+        let (mut conn, mut response) = match self.connect_and_request(&request).await {
             Err(SslVpnError::Io(e)) => {
                 tracing::debug!(error = %e, "logincheck : erreur d'E/S, nouvelle tentative");
                 self.connect_and_request(&request).await?
@@ -283,7 +301,57 @@ impl SslVpnClient {
         };
         drop(request);
         tracing::debug!(status = response.status(), "réponse logincheck");
-        let cookie = match interpret_logincheck(&response) {
+        let mut outcome = interpret_logincheck(&response);
+        if let (
+            Some(provider),
+            AuthOutcome::TwoFactorRequired(SecondFactor::TokenInfo {
+                tokeninfo,
+                challenge,
+                state,
+            }),
+        ) = (provider, &outcome)
+        {
+            let kind = if tokeninfo == TOKENINFO_FTM_PUSH {
+                SecondFactorKind::Push
+            } else {
+                SecondFactorKind::Code
+            };
+            let ch = SecondFactorChallenge {
+                kind,
+                message: challenge.clone(),
+            };
+            // La saisie peut être longue : ne pas garder la connexion ouverte.
+            conn.shutdown().await;
+            let reply = match provider.second_factor(&ch).await {
+                SecondFactorAnswer::Cancelled => return Err(SslVpnError::SecondFactorCancelled),
+                SecondFactorAnswer::Code(code) => Some(code),
+                SecondFactorAnswer::Push => None,
+            };
+            let request = http::logincheck_second_factor_request(
+                &self.gateway,
+                &creds.username,
+                &self.realm,
+                state,
+                match &reply {
+                    Some(code) => http::SecondFactorReply::Code(code),
+                    None => http::SecondFactorReply::Push,
+                },
+            );
+            drop(reply);
+            let (c2, r2) = self.connect_and_request(&request).await?;
+            drop(request);
+            conn = c2;
+            response = r2;
+            tracing::debug!(
+                status = response.status(),
+                "réponse logincheck (2e facteur)"
+            );
+            outcome = interpret_logincheck(&response);
+            if matches!(outcome, AuthOutcome::TwoFactorRequired(_)) {
+                return Err(SslVpnError::AuthFailed);
+            }
+        }
+        let cookie = match outcome {
             AuthOutcome::Success { cookie } => cookie,
             AuthOutcome::BadCredentials => return Err(SslVpnError::AuthFailed),
             AuthOutcome::UnsupportedChallenge => return Err(SslVpnError::UnsupportedChallenge),

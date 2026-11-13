@@ -18,7 +18,7 @@ use std::net::Ipv6Addr;
 use secrecy::{ExposeSecret, SecretString};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::auth::SessionCookie;
+use crate::auth::{ChallengeState, SessionCookie};
 
 /// `User-Agent` par défaut (openfortivpn et openconnect, §3.1).
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 SV1";
@@ -254,6 +254,57 @@ pub fn logincheck_request(
     body.push_str("&realm=");
     url_encode_into(&mut body, realm.as_bytes());
     body.push_str("&ajax=1");
+    build_request(gateway, "POST", URI_LOGINCHECK, None, body.as_bytes())
+}
+
+/// Réponse au challenge de second facteur (§13).
+#[derive(Debug, Clone, Copy)]
+pub enum SecondFactorReply<'a> {
+    /// Code OTP saisi par l'utilisateur.
+    Code(&'a SecretString),
+    /// Notification push FortiToken Mobile acceptée sur l'appareil (`ftmpush=1`).
+    Push,
+}
+
+/// 2e `POST /remote/logincheck` après un challenge `ret=2` (§13) : corps
+/// `username=..&realm=..&reqid=..&polid=..&grp=..&portal=..&peer=..&code=<otp>&code2=&magic=..`
+/// ou, pour le push, `...&peer=..&ftmpush=1`. Toutes les valeurs sont encodées (§3.3).
+pub fn logincheck_second_factor_request(
+    gateway: &Gateway,
+    username: &str,
+    realm: &str,
+    state: &ChallengeState,
+    reply: SecondFactorReply<'_>,
+) -> Zeroizing<Vec<u8>> {
+    let mut body = Zeroizing::new(String::with_capacity(256));
+    for (i, (k, v)) in [
+        ("username", username),
+        ("realm", realm),
+        ("reqid", state.reqid.as_str()),
+        ("polid", state.polid.as_str()),
+        ("grp", state.grp.as_str()),
+        ("portal", state.portal.as_str()),
+        ("peer", state.peer.as_str()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if i > 0 {
+            body.push('&');
+        }
+        body.push_str(k);
+        body.push('=');
+        url_encode_into(&mut body, v.as_bytes());
+    }
+    match reply {
+        SecondFactorReply::Code(code) => {
+            body.push_str("&code=");
+            url_encode_into(&mut body, code.expose_secret().as_bytes());
+            body.push_str("&code2=&magic=");
+            url_encode_into(&mut body, state.magic.as_bytes());
+        }
+        SecondFactorReply::Push => body.push_str("&ftmpush=1"),
+    }
     build_request(gateway, "POST", URI_LOGINCHECK, None, body.as_bytes())
 }
 
@@ -818,6 +869,49 @@ mod tests {
         let pw = SecretString::from("x");
         let req = logincheck_request(&gw(), "jdoe", &pw, "");
         assert!(req.ends_with(b"\r\n\r\nusername=jdoe&credential=x&realm=&ajax=1"));
+    }
+
+    fn challenge() -> ChallengeState {
+        ChallengeState {
+            reqid: "12345678".into(),
+            polid: "1-1-87654321".into(),
+            grp: "staff-grp".into(),
+            portal: "full-access".into(),
+            peer: String::new(),
+            magic: "1-23456789".into(),
+        }
+    }
+
+    #[test]
+    fn second_factor_request_code() {
+        let code = SecretString::from("12 34&6");
+        let req = logincheck_second_factor_request(
+            &gw(),
+            "jdoe",
+            "staff",
+            &challenge(),
+            SecondFactorReply::Code(&code),
+        );
+        let text = String::from_utf8(req.to_vec()).unwrap();
+        assert!(text.starts_with("POST /remote/logincheck HTTP/1.1\r\n"));
+        assert!(text.ends_with(
+            "\r\n\r\nusername=jdoe&realm=staff&reqid=12345678&polid=1-1-87654321&grp=staff-grp\
+             &portal=full-access&peer=&code=12%2034%266&code2=&magic=1-23456789"
+        ));
+    }
+
+    #[test]
+    fn second_factor_request_push() {
+        let req = logincheck_second_factor_request(
+            &gw(),
+            "jdoe",
+            "",
+            &challenge(),
+            SecondFactorReply::Push,
+        );
+        let text = String::from_utf8(req.to_vec()).unwrap();
+        assert!(text.ends_with("&portal=full-access&peer=&ftmpush=1"));
+        assert!(!text.contains("code="));
     }
 
     #[test]

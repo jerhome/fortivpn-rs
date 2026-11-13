@@ -7,7 +7,7 @@ use fortivpn_core::{DisconnectReason, NetError, TransportError};
 /// Code de sortie (valeur stable, documentée dans `--help`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum Exit {
+pub enum Exit {
     /// Arrêt demandé (Ctrl+C, fermeture de la console…) ou commande réussie.
     Ok = 0,
     /// Erreur interne ou inattendue (transport indisponible, saisie impossible…).
@@ -26,11 +26,15 @@ pub(crate) enum Exit {
     LocalNetwork = 6,
     /// Une autre instance de fortivpn-rs est active (verrou d'instance Windows).
     AlreadyRunning = 7,
+    /// Double authentification (OTP, challenge) exigée : non prise en charge.
+    SecondFactor = 8,
+    /// Connexion annulée par l'utilisateur (second facteur refusé de saisir).
+    Cancelled = 9,
 }
 
 impl Exit {
     /// Valeur numérique.
-    pub(crate) fn code(self) -> u8 {
+    pub fn code(self) -> u8 {
         self as u8
     }
 }
@@ -42,11 +46,13 @@ impl From<Exit> for ExitCode {
 }
 
 /// Code de sortie correspondant à la fin d'une session.
-pub(crate) fn from_reason(reason: &DisconnectReason) -> Exit {
+pub fn from_reason(reason: &DisconnectReason) -> Exit {
     match reason {
         DisconnectReason::Requested => Exit::Ok,
         DisconnectReason::ConnectFailed(e) => match **e {
             TransportError::AuthFailed => Exit::AuthRejected,
+            TransportError::SecondFactorRequired => Exit::SecondFactor,
+            TransportError::Cancelled => Exit::Cancelled,
             _ => Exit::Connection,
         },
         DisconnectReason::NetworkFailed(_) | DisconnectReason::TunClosed => Exit::LocalNetwork,
@@ -59,20 +65,16 @@ pub(crate) fn from_reason(reason: &DisconnectReason) -> Exit {
 
 /// Code de sortie d'un échec de création du backend réseau.
 ///
-/// `netwin` signale le verrou d'instance par `NetError::Os { op: "instance_lock" }`
-/// (autre instance active, ou mutex inaccessible faute de droits).
-pub(crate) fn from_backend_error(e: &NetError) -> Exit {
+/// `netwin` signale une autre instance active par `NetError::AlreadyRunning`.
+pub fn from_backend_error(e: &NetError) -> Exit {
     match e {
-        NetError::Os { op, .. } if *op == INSTANCE_LOCK_OP => Exit::AlreadyRunning,
+        NetError::AlreadyRunning => Exit::AlreadyRunning,
         _ => Exit::LocalNetwork,
     }
 }
 
-/// Opération `netwin` du verrou d'instance.
-const INSTANCE_LOCK_OP: &str = "instance_lock";
-
 /// Aide affichée par `--help`.
-pub(crate) const HELP: &str = "\
+pub const HELP: &str = "\
 Codes de sortie :
   0  arrêt demandé (Ctrl+C, fermeture de la console) ou commande réussie
   1  erreur interne
@@ -81,7 +83,9 @@ Codes de sortie :
   4  authentification refusée
   5  erreur réseau côté passerelle (connexion, TLS, tunnel refusé ou perdu)
   6  erreur réseau locale (interface TUN, routes, DNS ; droits insuffisants ?)
-  7  une autre instance de fortivpn-rs est déjà active";
+  7  une autre instance de fortivpn-rs est déjà active
+  8  double authentification (OTP, challenge) non prise en charge par cette configuration
+  9  connexion annulée par l'utilisateur (saisie du second facteur abandonnée)";
 
 #[cfg(test)]
 mod tests {
@@ -116,6 +120,16 @@ mod tests {
                 Exit::Connection,
                 5,
             ),
+            (
+                DisconnectReason::ConnectFailed(t(TransportError::SecondFactorRequired)),
+                Exit::SecondFactor,
+                8,
+            ),
+            (
+                DisconnectReason::ConnectFailed(t(TransportError::Cancelled)),
+                Exit::Cancelled,
+                9,
+            ),
             (DisconnectReason::TransportClosed, Exit::Connection, 5),
             (
                 DisconnectReason::NetworkFailed(Arc::new(NetError::Unsupported("ipv6"))),
@@ -132,11 +146,16 @@ mod tests {
 
     #[test]
     fn backend_errors() {
+        assert_eq!(
+            from_backend_error(&NetError::AlreadyRunning),
+            Exit::AlreadyRunning
+        );
+        // Plus de détection par chaîne : un `Os` « instance_lock » n'est qu'une erreur locale.
         let lock = NetError::Os {
             op: "instance_lock",
-            reason: "une autre instance de fortivpn-rs est déjà active".into(),
+            reason: "x".into(),
         };
-        assert_eq!(from_backend_error(&lock), Exit::AlreadyRunning);
+        assert_eq!(from_backend_error(&lock), Exit::LocalNetwork);
         assert_eq!(Exit::AlreadyRunning.code(), 7);
         let other = NetError::Os {
             op: "wintun_load",
@@ -160,6 +179,8 @@ mod tests {
             Exit::Connection,
             Exit::LocalNetwork,
             Exit::AlreadyRunning,
+            Exit::SecondFactor,
+            Exit::Cancelled,
         ];
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {

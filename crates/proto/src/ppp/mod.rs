@@ -12,5 +12,7 @@ mod packet;
 mod session;
 
 pub use options::{ConfigOption, IpcpOption, LcpOption, encode_options, parse_options};
-pub use packet::{Code, ControlPacket, MAX_CONTROL_DATA, Packet, PacketError, PppFrame, Protocol};
+pub use packet::{
+    Code, ControlPacket, ControlSummary, MAX_CONTROL_DATA, Packet, PacketError, PppFrame, Protocol,
+};
 pub use session::{DEFAULT_MRU, DownReason, PppConfig, PppEvent, PppSession};

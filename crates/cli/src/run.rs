@@ -12,11 +12,12 @@ use fortivpn_core::{
 
 /// Exécute une session jusqu'à sa fin.
 ///
-/// Quand `stop` se termine, l'arrêt est demandé via
+/// Quand `stop` se termine (il fournit le plafond de déconnexion si l'OS impose un
+/// arrêt rapide, `None` sinon), l'arrêt est demandé via
 /// [`SessionHandle::shutdown`](fortivpn_core::SessionHandle::shutdown) puis la fin propre
 /// de la session (nettoyage réseau puis déconnexion du transport) est **attendue**.
 /// `on_event` reçoit chaque événement, y compris le `Disconnected` final.
-pub(crate) async fn run_session<T, B, S, F>(
+pub async fn run_session<T, B, S, F>(
     transport: T,
     backend: B,
     credentials: Credentials,
@@ -27,7 +28,7 @@ pub(crate) async fn run_session<T, B, S, F>(
 where
     T: Transport,
     B: NetBackend,
-    S: Future<Output = ()>,
+    S: Future<Output = Option<Duration>>,
     F: FnMut(&SessionEvent),
 {
     let (mut session, handle, mut events) = Session::new(transport, backend, credentials, options);
@@ -38,10 +39,13 @@ where
     let reason = loop {
         tokio::select! {
             reason = &mut run => break reason,
-            () = &mut stop, if !stop_requested => {
+            limit = &mut stop, if !stop_requested => {
                 stop_requested = true;
                 tracing::info!("arrêt demandé : nettoyage réseau et déconnexion…");
-                handle.shutdown();
+                match limit {
+                    Some(limit) => handle.shutdown_within(limit),
+                    None => handle.shutdown(),
+                }
             }
             Some(event) = events.recv() => on_event(&event),
         }
@@ -54,7 +58,7 @@ where
 
 /// Suivi des événements : lignes lisibles et chronométrage des étapes (story 4.4).
 #[derive(Debug, Default)]
-pub(crate) struct Reporter {
+pub struct Reporter {
     connecting: Option<Duration>,
     authenticated: Option<Duration>,
     config_received: Option<Duration>,
@@ -63,7 +67,7 @@ pub(crate) struct Reporter {
 
 impl Reporter {
     /// Enregistre l'événement et retourne la ligne à afficher.
-    pub(crate) fn observe(&mut self, event: &SessionEvent) -> String {
+    pub fn observe(&mut self, event: &SessionEvent) -> String {
         let at = event.elapsed;
         let what = match &event.state {
             SessionState::Connecting => {
@@ -106,7 +110,7 @@ impl Reporter {
     }
 
     /// « connecté en X ms (étape : Y ms, …) », une fois le tunnel actif.
-    pub(crate) fn summary(&self) -> Option<String> {
+    pub fn summary(&self) -> Option<String> {
         let up = self.tunnel_up?;
         let start = self.connecting.unwrap_or_default();
         let mut out = format!("connecté en {} ms", up.saturating_sub(start).as_millis());
@@ -132,7 +136,7 @@ impl Reporter {
 }
 
 /// Raison de fin lisible (sans secret : les erreurs de `core` n'en contiennent pas).
-pub(crate) fn describe_reason(reason: &DisconnectReason) -> String {
+pub fn describe_reason(reason: &DisconnectReason) -> String {
     match reason {
         DisconnectReason::Requested => "arrêt demandé".to_owned(),
         DisconnectReason::ConnectFailed(e) => format!("échec de la connexion : {e}"),
@@ -140,6 +144,10 @@ pub(crate) fn describe_reason(reason: &DisconnectReason) -> String {
         DisconnectReason::TransportFailed(e) => format!("tunnel interrompu : {e}"),
         DisconnectReason::TransportClosed => "session fermée par la passerelle".to_owned(),
         DisconnectReason::TunClosed => "interface TUN fermée".to_owned(),
+        DisconnectReason::ClockJump(d) => format!(
+            "sortie de veille détectée (saut d'horloge de {} s), reconnexion",
+            d.as_secs()
+        ),
         other => format!("{other:?}"),
     }
 }
@@ -195,6 +203,7 @@ mod tests {
             SessionOptions::new("fvpn0"),
             async {
                 let _ = stop_rx.await;
+                None
             },
             |ev| {
                 lines.push(reporter.observe(ev));
@@ -249,7 +258,7 @@ mod tests {
             backend.clone(),
             creds("wrong"),
             SessionOptions::new("fvpn0"),
-            std::future::pending(),
+            std::future::pending::<Option<Duration>>(),
             |ev| {
                 reporter.observe(ev);
             },
@@ -270,7 +279,7 @@ mod tests {
             backend.clone(),
             creds("pw"),
             SessionOptions::new("fvpn0").with_reconnect(fortivpn_core::ReconnectPolicy::disabled()),
-            std::future::pending(),
+            std::future::pending::<Option<Duration>>(),
             |ev| {
                 if matches!(ev.state, SessionState::TunnelUp { .. }) {
                     observer.end_session(Err(fortivpn_core::TransportError::Closed));
@@ -280,6 +289,24 @@ mod tests {
         .await;
         assert_eq!(from_reason(&reason), Exit::Connection, "{reason:?}");
         assert!(backend.is_clean());
+    }
+
+    #[test]
+    fn clock_jump_is_readable() {
+        let msg = describe_reason(&DisconnectReason::ClockJump(Duration::from_millis(312_900)));
+        assert_eq!(
+            msg,
+            "sortie de veille détectée (saut d'horloge de 312 s), reconnexion"
+        );
+    }
+
+    #[test]
+    fn second_factor_message_and_exit() {
+        let reason = DisconnectReason::ConnectFailed(std::sync::Arc::new(
+            fortivpn_core::TransportError::SecondFactorRequired,
+        ));
+        assert!(describe_reason(&reason).contains("double authentification non prise en charge"));
+        assert_eq!(from_reason(&reason), Exit::SecondFactor);
     }
 
     #[test]

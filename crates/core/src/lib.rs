@@ -33,7 +33,8 @@ pub use session::{
     SessionOptions, SessionState,
 };
 pub use transport::{
-    ConnectStep, Credentials, ProgressSink, SessionEnd, SessionEndNotifier, Transport,
-    TransportSession, session_end,
+    ConnectStep, Credentials, ProgressSink, SecondFactorAnswer, SecondFactorChallenge,
+    SecondFactorFuture, SecondFactorKind, SecondFactorProvider, SessionEnd, SessionEndNotifier,
+    Transport, TransportSession, session_end,
 };
 pub use tunnel::{Tunnel, TunnelError, TunnelHandle, TunnelOptions, TunnelParams};

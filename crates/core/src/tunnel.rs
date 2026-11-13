@@ -27,6 +27,7 @@
 //! - en émission, un paquet IP est copié une seule fois, derrière son en-tête de
 //!   8 octets, dans le tampon d'émission.
 
+use std::fmt::Write as _;
 use std::io;
 use std::net::Ipv4Addr;
 use std::num::NonZeroU32;
@@ -35,7 +36,7 @@ use std::time::Duration;
 use bytes::BytesMut;
 use proto::auth::SessionCookie;
 use proto::frame::{self, FrameDecoder, FrameError};
-use proto::ppp::{DownReason, PppConfig, PppEvent, PppSession, Protocol};
+use proto::ppp::{ControlSummary, DownReason, PppConfig, PppEvent, PppSession, Protocol};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -294,11 +295,13 @@ where
     let (ours, mut theirs) = PacketChannel::pair(options.queue_capacity);
     let (notifier, end) = session_end();
     let (stop_tx, stop_rx) = oneshot::channel();
+    let up_since = Instant::now();
     let task = tokio::spawn(async move {
         let result = driver.run(&mut theirs, stop_rx).await;
+        let uptime = up_since.elapsed();
         match &result {
-            Ok(()) => tracing::info!("tunnel fermé"),
-            Err(e) => tracing::warn!(error = %e, "fin du tunnel"),
+            Ok(()) => tracing::info!(?uptime, "tunnel fermé"),
+            Err(e) => tracing::warn!(error = %e, ?uptime, "fin du tunnel"),
         }
         // Raison publiée avant la fermeture du canal (contrat de `TransportSession`).
         notifier.finish(result.map_err(TransportError::from));
@@ -347,6 +350,50 @@ async fn write_step<W: AsyncWrite + Unpin>(wr: &mut W, out: &mut BytesMut) -> io
     Ok(false)
 }
 
+/// Octets de trame affichés au plus par la trace des trames de contrôle.
+const TRACE_HEX_MAX: usize = 64;
+
+/// Trace (`-vv`) d'une trame PPP de contrôle : direction, protocole, code, id,
+/// longueur et hexdump borné. Les datagrammes de données ne sont jamais journalisés
+/// (contenu utilisateur) ; les trames de contrôle ne portent aucun secret.
+fn trace_control(direction: &'static str, ppp: &[u8]) {
+    if !tracing::enabled!(tracing::Level::TRACE) {
+        return;
+    }
+    let Some(s) = ControlSummary::of(ppp) else {
+        return;
+    };
+    let shown = &ppp[..ppp.len().min(TRACE_HEX_MAX)];
+    let mut hex = String::with_capacity(shown.len() * 3);
+    for (i, b) in shown.iter().enumerate() {
+        if i > 0 {
+            hex.push(' ');
+        }
+        let _ = write!(hex, "{b:02x}");
+    }
+    tracing::trace!(
+        direction,
+        protocol = %s.protocol,
+        code = ?s.code,
+        id = s.id,
+        declared_len = s.declared_len,
+        frame_len = ppp.len(),
+        truncated = ppp.len() > shown.len(),
+        hex = %hex,
+        "trame PPP de contrôle"
+    );
+}
+
+/// Datagramme IPv4 plausible : version 4, en-tête >= 20 octets, longueur totale
+/// cohérente. Un autre contenu (IPv6 émis par l'OS sur la TUN : RS, MLD…) ne doit pas
+/// partir sous le protocole PPP `0x0021`.
+fn is_ipv4_datagram(p: &[u8]) -> bool {
+    p.len() >= 20
+        && p[0] >> 4 == 4
+        && usize::from(p[0] & 0x0f) >= 5
+        && usize::from(u16::from_be_bytes([p[2], p[3]])) <= p.len()
+}
+
 /// État de la boucle : flux, décodeur, tampon d'émission, automate PPP.
 struct Driver<S> {
     rd: ReadHalf<S>,
@@ -381,6 +428,7 @@ impl<S: AsyncRead + AsyncWrite> Driver<S> {
     /// Encapsule les trames PPP en attente dans le tampon d'émission.
     fn queue_transmits(&mut self) {
         while let Some(ppp) = self.ppp.poll_transmit() {
+            trace_control("tx", &ppp);
             if let Err(e) = frame::encode_frame(&ppp, &mut self.out) {
                 tracing::warn!(error = %e, "trame PPP de contrôle non encapsulable, ignorée");
             }
@@ -391,6 +439,14 @@ impl<S: AsyncRead + AsyncWrite> Driver<S> {
     fn queue_ip(&mut self, packet: &[u8]) {
         if !self.ppp.is_ip_up() {
             tracing::trace!("paquet IP ignoré : IPCP non ouvert");
+            return;
+        }
+        if !is_ipv4_datagram(packet) {
+            tracing::debug!(
+                len = packet.len(),
+                version = packet.first().map(|b| b >> 4),
+                "paquet non IPv4 ignoré (non émis sous le protocole PPP 0x0021)"
+            );
             return;
         }
         if let Err(e) = frame::encode_ppp_frame(Protocol::IPV4, packet, &mut self.out) {
@@ -521,6 +577,7 @@ impl<S: AsyncRead + AsyncWrite> Driver<S> {
                 }
             };
             self.got_frame = true;
+            trace_control("rx", &frame);
             if self.out.len() > OUT_HARD_LIMIT {
                 // Pair qui n'acquitte plus TCP : ne pas répondre aux trames de contrôle.
                 if !frame.starts_with(&Protocol::IPV4.0.to_be_bytes()) {

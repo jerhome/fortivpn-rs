@@ -52,6 +52,9 @@ pub enum NetError {
     /// L'interface TUN a été fermée.
     #[error("interface TUN fermée")]
     TunClosed,
+    /// Une autre instance de fortivpn-rs est déjà active (verrou d'instance).
+    #[error("une autre instance de fortivpn-rs est déjà active")]
+    AlreadyRunning,
 }
 
 /// Erreur d'un [`Transport`](crate::Transport).
@@ -64,6 +67,12 @@ pub enum TransportError {
     /// Erreur d'entrée/sortie (réseau, TLS…).
     #[error("erreur d'entrée/sortie")]
     Io(#[from] std::io::Error),
+    /// Second facteur (OTP, challenge) exigé : non pris en charge. Jamais transitoire.
+    #[error("double authentification non prise en charge")]
+    SecondFactorRequired,
+    /// L'utilisateur a annulé la saisie du second facteur. Jamais transitoire.
+    #[error("authentification annulée")]
+    Cancelled,
     /// Violation du protocole par la passerelle.
     #[error("erreur de protocole : {0}")]
     Protocol(String),
