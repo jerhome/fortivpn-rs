@@ -3,6 +3,9 @@
 Client Fortinet SSL VPN en Rust, destiné à remplacer FortiClient sous Windows 11.
 Référence fonctionnelle : openfortivpn (client Linux, C).
 
+Conventions communes de mes projets Rust : `../agents-home/docs/rust/CONVENTIONS.md` (Home Repo `../agents-home`,
+lis son `AGENTS.md`). En cas de conflit, ce fichier et les ADR du repo priment.
+
 ## Règles impératives
 
 - **Tout le développement, la compilation et les tests se font dans WSL2 (Linux).**
