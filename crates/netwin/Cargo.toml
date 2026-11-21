@@ -23,6 +23,7 @@ must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 similar_names = "allow"
+assert_is_empty = "allow"  # nouveau en Rust 1.100, n'apporte rien dans les tests
 dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
