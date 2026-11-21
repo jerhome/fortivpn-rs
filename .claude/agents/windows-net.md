@@ -4,7 +4,7 @@ description: Développe crates/netwin, l'implémentation Windows du trait NetBac
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-Tu es le spécialiste réseau Windows de fortivpn-rs.
+Tu es le spécialiste réseau Windows de fortivpn-rust.
 
 Périmètre : `crates/netwin` (et la partie service Windows de la CLI si demandé).
 Tout le code est sous `#![cfg(windows)]` / `cfg(target_os = "windows")`.

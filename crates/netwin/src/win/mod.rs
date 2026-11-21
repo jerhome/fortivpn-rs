@@ -130,7 +130,7 @@ impl WinNetBackend {
     /// Chaque entrée du journal est vérifiée avant retrait : routes seulement
     /// si elles portent nos marques, adresses / DNS d'interface jamais (notre
     /// adaptateur Wintun a disparu avec son processus, et eux avec lui),
-    /// règles NRPT seulement sous notre préfixe ; puis règles NRPT fortivpn-rs
+    /// règles NRPT seulement sous notre préfixe ; puis règles NRPT fortivpn-rust
     /// orphelines. Erreur si un objet vérifié n'a pas pu être retiré (il reste
     /// dans le journal pour un nouvel essai).
     pub fn recover_stale(&self) -> Result<RecoveryReport, NetError> {
@@ -139,7 +139,7 @@ impl WinNetBackend {
 
     /// Diagnostic (lecture seule) : vrai si des règles NRPT de stratégie de
     /// groupe existent. Windows ignore alors les règles NRPT locales posées
-    /// par fortivpn-rs : noms internes possiblement résolus hors tunnel, fuite
+    /// par fortivpn-rust : noms internes possiblement résolus hors tunnel, fuite
     /// DNS possible en full-tunnel (revue 5.3, M3). `apply` le signale aussi
     /// par un avertissement, sans refuser la connexion ; rien n'est écrit sous
     /// la clé de stratégie de groupe.
@@ -177,7 +177,7 @@ fn tunnel_luid(tun: &TunInfo) -> Result<u64, NetError> {
     let by_guid =
         ffi::luid_from_guid(plan::adapter_guid(&tun.name))?.ok_or_else(|| NetError::Os {
             op: "tunnel_luid",
-            reason: format!("adaptateur fortivpn-rs « {} » introuvable", tun.name),
+            reason: format!("adaptateur fortivpn-rust « {} » introuvable", tun.name),
         })?;
     let designated = match tun.index {
         Some(index) => ffi::luid_from_index(index)?,
@@ -187,7 +187,7 @@ fn tunnel_luid(tun: &TunInfo) -> Result<u64, NetError> {
         return Err(NetError::Os {
             op: "tunnel_luid",
             reason: format!(
-                "l'interface « {} » n'est pas l'adaptateur créé par fortivpn-rs",
+                "l'interface « {} » n'est pas l'adaptateur créé par fortivpn-rust",
                 tun.name
             ),
         });

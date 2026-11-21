@@ -327,7 +327,7 @@ fn check_path(
     decide(&owner, aces.as_deref()).map_err(|reason| NetError::Os {
         op: "install_acl",
         reason: format!(
-            "{} : {reason} (installer fortivpn-rs et wintun.dll dans un dossier réservé \
+            "{} : {reason} (installer fortivpn-rust et wintun.dll dans un dossier réservé \
              aux administrateurs, ex. C:\\Program Files\\fortivpn-rs)",
             path.display()
         ),

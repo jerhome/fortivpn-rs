@@ -1,6 +1,6 @@
 # Licences tierces
 
-fortivpn-rs est distribué sous licence **Apache-2.0**. Ce fichier liste les composants tiers
+fortivpn-rust est distribué sous licence **Apache-2.0**. Ce fichier liste les composants tiers
 embarqués. Il est généré à partir de `cargo metadata` (champ `license` de chaque crate) ;
 les textes complets de licence sont fournis dans les sources de chaque crate.
 

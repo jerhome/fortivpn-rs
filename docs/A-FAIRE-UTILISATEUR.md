@@ -46,5 +46,5 @@ Valide le correctif « filtre IPv6 » (coupures à ~40 s auparavant).
 - L1 : « fini » (je lis `~/fortivpn-tests/`) ; L3 : 2 lignes de log ; W1/W2 : messages d'erreur ; ton ressenti vs FortiClient (temps de connexion).
 
 ## Questions en attente
-- Temps de connexion de FortiClient (pour comparaison) — fortivpn-rs : ~100–300 ms mesurés.
+- Temps de connexion de FortiClient (pour comparaison) — fortivpn-rust : ~100–300 ms mesurés.
 - Test d'interopérabilité strongSwan (IPsec 6.4) : nécessite `sudo` + installation de strongSwan → ton accord.

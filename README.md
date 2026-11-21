@@ -1,4 +1,4 @@
-# fortivpn-rs
+# fortivpn-rust
 
 Client **Fortinet SSL-VPN** écrit en Rust, conçu pour remplacer FortiClient sous Windows 11.
 La référence fonctionnelle est [openfortivpn](https://github.com/adrienverge/openfortivpn) (client Linux, C).

@@ -1,4 +1,4 @@
-// Interface fortivpn-rs, d'après docs/gui/maquette.html (thème sombre, ~420x640).
+// Interface fortivpn-rust, d'après docs/gui/maquette.html (thème sombre, ~420x640).
 // Aucun état métier ici : tout vient de `UiState` (src/model.rs) via les propriétés.
 
 import { AboutSlint, Palette } from "std-widgets.slint";
@@ -288,7 +288,7 @@ component Hero inherits HorizontalLayout {
         alignment: center;
         spacing: 2px;
         Text {
-            text: root.host == "" ? "fortivpn-rs" : root.host;
+            text: root.host == "" ? "fortivpn-rust" : root.host;
             color: Theme.text;
             font-size: 16px;
             font-weight: 600;
@@ -353,7 +353,7 @@ component RedirRow inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
-    title: "fortivpn-rs";
+    title: "fortivpn-rust";
     background: Theme.bg-win;
     default-font-family: Theme.font;
     default-font-size: 14px;
@@ -760,7 +760,7 @@ export component MainWindow inherits Window {
                     clicked => { root.save-settings(); }
                 }
                 Text {
-                    text: "À propos de fortivpn-rs";
+                    text: "À propos de fortivpn-rust";
                     color: Theme.accent-2;
                     font-size: 12px;
                     horizontal-alignment: center;
@@ -872,7 +872,7 @@ export component MainWindow inherits Window {
             about-box := VerticalLayout {
                 padding: 20px;
                 spacing: 12px;
-                Text { text: "fortivpn-rs"; color: Theme.text; font-size: 16px; font-weight: 600; }
+                Text { text: "fortivpn-rust"; color: Theme.text; font-size: 16px; font-weight: 600; }
                 Text { text: "Version " + root.app-version; color: Theme.muted; font-size: 12.5px; }
                 Text { text: "Licence Apache-2.0"; color: Theme.muted; font-size: 12.5px; }
                 if root.app-repo != "": Text {

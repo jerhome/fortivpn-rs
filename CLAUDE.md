@@ -1,4 +1,4 @@
-# fortivpn-rs
+# fortivpn-rust
 
 Client Fortinet SSL VPN en Rust, destiné à remplacer FortiClient sous Windows 11.
 Référence fonctionnelle : openfortivpn (client Linux, C).
@@ -15,7 +15,7 @@ lis son `AGENTS.md`). En cas de conflit, ce fichier et les ADR du repo priment.
 - Ne jamais se connecter à la vraie passerelle VPN de l'entreprise sans demande explicite.
   Les tests utilisent `tools/mock-gw`.
 - Aucun secret (mot de passe, cookie, OTP) dans les logs, les tests ou le dépôt.
-- **Commits / push** : le coordinateur peut commiter et pousser librement sur `jerhome/fortivpn-rs` (dépôt perso public, accord de l'utilisateur du 2026-11-13) après `scripts/check.sh` vert et vérification de l'absence de données perso/employeur. Les sous-agents ne commitent jamais.
+- **Commits / push** : le coordinateur peut commiter et pousser librement sur `jerhome/fortivpn-rust` (dépôt perso public, accord de l'utilisateur du 2026-11-13) après `scripts/check.sh` vert et vérification de l'absence de données perso/employeur. Les sous-agents ne commitent jamais.
   Identité de commit : compte personnel « jerhome » (configurée en local au dépôt), jamais l'identité
   git globale professionnelle.
 

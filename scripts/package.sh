@@ -73,7 +73,7 @@ mkdir -p "$STAGE/$WIN_NAME/docs" "$STAGE/$LIN_NAME/docs"
 
 write_config() {
     cat > "$1" <<'TOML'
-# Exemple de configuration fortivpn-rs (à copier puis adapter).
+# Exemple de configuration fortivpn-rust (à copier puis adapter).
 # Emplacement par défaut :
 #   Windows : %APPDATA%\fortivpn-rs\config.toml
 #   Linux   : ~/.config/fortivpn-rs/config.toml
@@ -161,9 +161,9 @@ else
     printf 'Pré-release %s.\n' "$TAG" > "$NOTES"
 fi
 printf '\nSHA256 :\n\n```\n%s\n```\n' "$(cat "$OUT/SHA256SUMS")" >> "$NOTES"
-git tag -a "$TAG" -m "fortivpn-rs $TAG"
+git tag -a "$TAG" -m "fortivpn-rust $TAG"
 git push origin "$TAG"
-gh release create "$TAG" --prerelease --verify-tag --title "fortivpn-rs $TAG" \
+gh release create "$TAG" --prerelease --verify-tag --title "fortivpn-rust $TAG" \
     --notes-file "$NOTES" \
     "$OUT/$WIN_NAME.zip" "$OUT/$LIN_NAME.tar.gz" "$OUT/SHA256SUMS"
 step "OK : pré-release $TAG publiée"

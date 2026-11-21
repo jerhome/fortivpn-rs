@@ -52,8 +52,8 @@ pub enum NetError {
     /// L'interface TUN a été fermée.
     #[error("interface TUN fermée")]
     TunClosed,
-    /// Une autre instance de fortivpn-rs est déjà active (verrou d'instance).
-    #[error("une autre instance de fortivpn-rs est déjà active")]
+    /// Une autre instance de fortivpn-rust est déjà active (verrou d'instance).
+    #[error("une autre instance de fortivpn-rust est déjà active")]
     AlreadyRunning,
 }
 

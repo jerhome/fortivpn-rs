@@ -24,7 +24,7 @@ pub enum Exit {
     /// Erreur réseau locale : création ou configuration de l'interface TUN, des
     /// routes ou du DNS (souvent : droits insuffisants).
     LocalNetwork = 6,
-    /// Une autre instance de fortivpn-rs est active (verrou d'instance Windows).
+    /// Une autre instance de fortivpn-rust est active (verrou d'instance Windows).
     AlreadyRunning = 7,
     /// Double authentification (OTP, challenge) exigée : non prise en charge.
     SecondFactor = 8,
@@ -98,7 +98,7 @@ Codes de sortie :
   4  authentification refusée
   5  erreur réseau côté passerelle (connexion, TLS, tunnel refusé ou perdu)
   6  erreur réseau locale (interface TUN, routes, DNS ; droits insuffisants ?)
-  7  une autre instance de fortivpn-rs est déjà active
+  7  une autre instance de fortivpn-rust est déjà active
   8  double authentification (OTP, challenge) non prise en charge par cette configuration
   9  connexion annulée par l'utilisateur (saisie du second facteur abandonnée)";
 

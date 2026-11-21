@@ -1,4 +1,4 @@
-# Vecteurs LCP (RFC 1661) encapsulés 0x5050 — fortivpn-rs, docs/protocol.md §6.
+# Vecteurs LCP (RFC 1661) encapsulés 0x5050 — fortivpn-rust, docs/protocol.md §6.
 # Format : voir docs/vectors/README.md.
 #   - lignes commençant par '#' : commentaires ;
 #   - '@frame <nom> dir=<c2g|g2c|stream> len=<octets>' ouvre un vecteur ;

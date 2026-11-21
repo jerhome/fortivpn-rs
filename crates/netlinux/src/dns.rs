@@ -98,7 +98,7 @@ pub(crate) fn render(dns: &DnsConfig) -> Result<Option<String>, NetError> {
             "plus de {GLIBC_MAXNS} serveurs DNS : la glibc n'utilisera que les premiers"
         );
     }
-    let mut out = String::from("# Généré par fortivpn-rs (netlinux), retiré à la déconnexion.\n");
+    let mut out = String::from("# Généré par fortivpn-rust (netlinux), retiré à la déconnexion.\n");
     for server in &dns.servers {
         out.push_str("nameserver ");
         out.push_str(&server.to_string());

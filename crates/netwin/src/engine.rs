@@ -177,12 +177,12 @@ pub struct RecoveryReport {
     /// Entrées trouvées dans le journal.
     pub stale_entries: usize,
     /// Entrées ignorées sans rien retirer : objet absent, ou non attribuable
-    /// à fortivpn-rs (route sans nos marques, interface autre que notre
+    /// à fortivpn-rust (route sans nos marques, interface autre que notre
     /// adaptateur, nom de règle NRPT étranger).
     pub rejected_entries: usize,
     /// Entrées vérifiées puis retirées (ou disparues entre-temps).
     pub removed_entries: usize,
-    /// Règles NRPT fortivpn-rs orphelines (absentes du journal) supprimées.
+    /// Règles NRPT fortivpn-rust orphelines (absentes du journal) supprimées.
     pub orphan_nrpt_rules: usize,
     /// Journal illisible ou hors bornes (ignoré puis remplacé).
     pub corrupt_state: bool,
@@ -196,7 +196,7 @@ impl RecoveryReport {
 }
 
 /// Ne garde, parmi les entrées d'un journal relu, que celles qui désignent
-/// de façon vérifiable un objet créé par fortivpn-rs (revue 5.3, E1) :
+/// de façon vérifiable un objet créé par fortivpn-rust (revue 5.3, E1) :
 ///
 /// - `Address` / `InterfaceDns` : seulement sur notre adaptateur
 ///   (`owned_luid`, LUID dérivé de son GUID) ; `None` : aucune (un adaptateur
@@ -453,14 +453,14 @@ impl<O: SystemOps, J: JournalStore> Tracker<O, J> {
                 if full_tunnel {
                     tracing::warn!(
                         "règles NRPT de stratégie de groupe présentes : Windows ignore les règles \
-                         NRPT locales de fortivpn-rs ; en full-tunnel, la fuite DNS est bloquée \
+                         NRPT locales de fortivpn-rust ; en full-tunnel, la fuite DNS est bloquée \
                          par le pare-feu (filtres WFP actifs), sinon des requêtes DNS peuvent \
                          partir hors tunnel"
                     );
                 } else {
                     tracing::warn!(
                         "règles NRPT de stratégie de groupe présentes : Windows ignore les règles \
-                         NRPT locales de fortivpn-rs ; en split-tunnel (pas de blocage DNS), les \
+                         NRPT locales de fortivpn-rust ; en split-tunnel (pas de blocage DNS), les \
                          noms internes peuvent être résolus par le DNS local"
                     );
                 }

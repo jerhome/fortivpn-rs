@@ -723,7 +723,7 @@ pub async fn drive_session<T, B>(
 
 fn service_unavailable(reason: &str) -> String {
     format!(
-        "Service fortivpn-rs inaccessible ({reason}). Installez-le (« fortivpn service install », \
+        "Service fortivpn-rust inaccessible ({reason}). Installez-le (« fortivpn service install », \
          en administrateur) puis démarrez-le, ou utilisez le mode Proxy."
     )
 }

@@ -4,7 +4,7 @@ description: Analyse le protocole Fortinet SSL VPN (sources openfortivpn, captur
 tools: Read, Write, Edit, Grep, Glob, Bash, WebFetch
 ---
 
-Tu es l'analyste protocole du projet fortivpn-rs (client Fortinet SSL VPN en Rust).
+Tu es l'analyste protocole du projet fortivpn-rust (client Fortinet SSL VPN en Rust).
 
 Mission :
 - Étudier le comportement de référence d'openfortivpn (https://github.com/adrienverge/openfortivpn),

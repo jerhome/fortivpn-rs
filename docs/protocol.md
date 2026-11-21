@@ -22,7 +22,7 @@ protocole tunnel « v2 » (non PPP), IPv6, host-check.
 
 **Conventions** :
 - « openfortivpn fait X » = comportement lu dans le code ; « RECOMMANDÉ » = choix proposé
-  pour fortivpn-rs ; **[NV]** = non vérifié, voir §14.
+  pour fortivpn-rust ; **[NV]** = non vérifié, voir §14.
 - Entiers multi-octets : **big-endian** (ordre réseau) partout.
 - C→G = client vers passerelle ; G→C = passerelle vers client.
 - Vecteurs : `docs/vectors/` (format dans `docs/vectors/README.md`). Référence notée
@@ -109,7 +109,7 @@ Algorithme exact d'openfortivpn :
    casse) à une entrée `trusted-cert` de la configuration. Sinon refus, avec affichage de
    l'empreinte, du sujet et de l'émetteur pour que l'utilisateur puisse l'ajouter.
 
-RECOMMANDÉ pour fortivpn-rs (story 1.3) : même sémantique (« trusted-cert » = exception
+RECOMMANDÉ pour fortivpn-rust (story 1.3) : même sémantique (« trusted-cert » = exception
 pour certificat non validable), normaliser la saisie (minuscules, retirer `:`), et
 optionnellement un mode strict « épinglage obligatoire même si PKI valide ».
 Vecteur de test : générer un certificat auto-signé dans le test et comparer à
@@ -425,7 +425,7 @@ nopcomp receive-all nodefaultroute nodetach lcp-max-configure 40 mru 1354`
 - Keepalive LCP : celui de `/etc/ppp/options` (souvent `lcp-echo-interval 30`,
   `lcp-echo-failure 4` sur Debian) — non fixé par openfortivpn.
 
-**Ce que fait un client à PPP intégré (fortivpn-rs)** : aucun HDLC, aucun FCS, aucun
+**Ce que fait un client à PPP intégré (fortivpn-rust)** : aucun HDLC, aucun FCS, aucun
 pty. Il produit/consomme directement « protocole (2 o) + paquet » dans l'enveloppe
 0x5050, et implémente lui-même LCP + IPCP (§9). Les routines FCS/HDLC ne sont utiles que
 pour des tests de compatibilité ; elles ne font pas partie du chemin de données.
@@ -631,7 +631,7 @@ tenter une fois, puis ré-auth complète sur 403/HTTP au lieu de PPP.
 
 ## 12. Erreurs (table de correspondance)
 
-| Situation | Détection | Erreur fortivpn-rs suggérée |
+| Situation | Détection | Erreur fortivpn-rust suggérée |
 |---|---|---|
 | Certificat refusé | §2.3 étape 3 | `TlsUntrusted { sha256_hex }` |
 | Identifiants refusés | `ret=0`, 405, marqueurs `permission_denied`, cookie vide | `AuthFailed` |

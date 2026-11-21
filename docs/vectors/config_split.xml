@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Vecteur fortivpn-rs (docs/protocol.md §3) : réponse de GET /remote/fortisslvpn_xml,
+  Vecteur fortivpn-rust (docs/protocol.md §3) : réponse de GET /remote/fortisslvpn_xml,
   cas SPLIT-TUNNEL, IPv4 seulement. Toutes les valeurs sont fictives.
   Structure calquée sur l'exemple documenté dans openconnect (fortinet.c) et sur les
   attributs lus par openfortivpn (http.c, parse_xml_config).

@@ -117,7 +117,7 @@ Par défaut, le certificat de la passerelle est validé par les racines du syst�
 | 4 | authentification refusée |
 | 5 | erreur réseau côté passerelle (connexion, TLS, tunnel refusé ou perdu) |
 | 6 | erreur réseau locale (interface TUN, routes, DNS ; droits insuffisants ?) |
-| 7 | une autre instance de fortivpn-rs est déjà active |
+| 7 | une autre instance de fortivpn-rust est déjà active |
 | 8 | double authentification (OTP, challenge) non prise en charge |
 
 ## Dépannage

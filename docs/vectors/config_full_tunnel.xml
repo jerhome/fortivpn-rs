@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Vecteur fortivpn-rs (docs/protocol.md §3) : cas FULL-TUNNEL (aucun <split-tunnel-info>
+  Vecteur fortivpn-rust (docs/protocol.md §3) : cas FULL-TUNNEL (aucun <split-tunnel-info>
   contenant d'<addr>) => tout le trafic IPv4 passe dans le tunnel (route par défaut ou
   0.0.0.0/1 + 128.0.0.0/1), en conservant une route /32 vers la passerelle via l'interface
   physique. Pas de domaine de recherche. Valeurs fictives.

@@ -290,7 +290,7 @@ pub(crate) fn nrpt_rule_name(index: usize) -> String {
     format!("{NRPT_RULE_PREFIX}{index:010x}}}")
 }
 
-/// Vrai si `name` est une règle NRPT créée par fortivpn-rs (insensible à la
+/// Vrai si `name` est une règle NRPT créée par fortivpn-rust (insensible à la
 /// casse, forme complète vérifiée : jamais de suppression d'une règle tierce).
 pub(crate) fn is_our_nrpt_rule(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();

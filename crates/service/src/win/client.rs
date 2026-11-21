@@ -55,7 +55,7 @@ pub async fn connect_pipe() -> io::Result<NamedPipeClient> {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    "service fortivpn-rs injoignable (installé et démarré ? `fortivpn service start`)",
+                    "service fortivpn-rust injoignable (installé et démarré ? `fortivpn service start`)",
                 ));
             }
             Err(e) => return Err(e),
@@ -66,7 +66,7 @@ pub async fn connect_pipe() -> io::Result<NamedPipeClient> {
     if expected != actual {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "le serveur du pipe n'est pas le service fortivpn-rs : connexion refusée",
+            "le serveur du pipe n'est pas le service fortivpn-rust : connexion refusée",
         ));
     }
     Ok(pipe)

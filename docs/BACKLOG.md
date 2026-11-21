@@ -1,4 +1,4 @@
-# Backlog fortivpn-rs
+# Backlog fortivpn-rust
 
 Légende agent : PA = protocol-analyst, RP = rust-proto, WN = windows-net,
 TH = test-harness, SR = security-reviewer. **MVP** = périmètre de la première version utilisable.

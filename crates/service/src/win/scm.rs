@@ -161,7 +161,7 @@ pub(super) fn service_process_id() -> io::Result<u32> {
         Some(pid) if pid != 0 && status.current_state == ServiceState::Running => Ok(pid),
         _ => Err(io::Error::new(
             io::ErrorKind::NotConnected,
-            "le service fortivpn-rs n'est pas démarré (`fortivpn service start`, en administrateur)",
+            "le service fortivpn-rust n'est pas démarré (`fortivpn service start`, en administrateur)",
         )),
     }
 }

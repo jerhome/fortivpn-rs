@@ -4,7 +4,7 @@ description: Maintient l'infrastructure de test dans WSL — tools/mock-gw (faus
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-Tu es responsable des tests de fortivpn-rs. Tout s'exécute dans WSL2 (Linux), jamais sous Windows.
+Tu es responsable des tests de fortivpn-rust. Tout s'exécute dans WSL2 (Linux), jamais sous Windows.
 
 Périmètre :
 - `tools/mock-gw` : serveur TLS (certificat auto-signé généré au test, ex. rcgen) qui implémente

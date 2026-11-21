@@ -1,4 +1,4 @@
-//! Interface graphique Slint de fortivpn-rs (`fortivpn-gui`).
+//! Interface graphique Slint de fortivpn-rust (`fortivpn-gui`).
 //!
 //! - [`model`] : état d'affichage pur (événements de session → écrans, étapes, journal) ;
 //! - [`settings`] : formulaire ⇄ `config.toml` (jamais de mot de passe) ;

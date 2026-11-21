@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Vecteur fortivpn-rs (docs/protocol.md §3.4) : réponse à GET /remote/fortisslvpn_xml?dual_stack=1
+  Vecteur fortivpn-rust (docs/protocol.md §3.4) : réponse à GET /remote/fortisslvpn_xml?dual_stack=1
   (format openconnect). Hors MVP : documente la section <ipv6> pour ne pas la rejeter au parsing.
   Préfixes IPv6 de documentation (2001:db8::/32) et ULA. Valeurs fictives.
 -->
