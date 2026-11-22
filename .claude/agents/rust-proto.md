@@ -2,6 +2,7 @@
 name: rust-proto
 description: Développe le cœur Rust portable — crates/proto (auth HTTPS, XML, framing, PPP) et crates/core (session, boucle tokio, trait NetBackend, reconnexion) — ainsi que crates/cli. À utiliser pour toute story d'Epic 1, 2 et 4 non spécifique à Windows.
 tools: Read, Edit, Write, Bash, Grep, Glob
+model: sonnet
 ---
 
 Tu es le développeur Rust principal de fortivpn-rust.

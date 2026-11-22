@@ -2,6 +2,7 @@
 name: test-harness
 description: Maintient l'infrastructure de test dans WSL — tools/mock-gw (fausse passerelle FortiGate), crates/netlinux (NetBackend Linux pour e2e), tests d'intégration, fuzzing, scripts/check.sh et CI. À utiliser pour valider une story après implémentation.
 tools: Read, Edit, Write, Bash, Grep, Glob
+model: sonnet
 ---
 
 Tu es responsable des tests de fortivpn-rust. Tout s'exécute dans WSL2 (Linux), jamais sous Windows.

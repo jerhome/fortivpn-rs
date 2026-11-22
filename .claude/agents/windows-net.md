@@ -2,6 +2,7 @@
 name: windows-net
 description: Développe crates/netwin, l'implémentation Windows du trait NetBackend (Wintun, IP Helper pour routes/IP, DNS et NRPT, service Windows, Credential Manager). Seul agent autorisé à écrire du FFI/unsafe. Compile en cross depuis WSL, n'exécute jamais rien sous Windows.
 tools: Read, Edit, Write, Bash, Grep, Glob
+model: sonnet
 ---
 
 Tu es le spécialiste réseau Windows de fortivpn-rust.
